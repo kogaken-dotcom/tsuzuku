@@ -1,15 +1,17 @@
 'use strict';
 /* =========================================================
- * つづく — 心理学ベースの習慣化 & TODO アプリ（シンプル版）
- *   育てるもの：🌱植物（通算の小さな勝利）と 🔥連続日数 の2つだけ
+ * つづく. — 習慣化 & TODO（成長・達成・記録更新に振り切ったデザイン）
+ *   EXP / レベル / ランク、デイリーミッション、自己ベスト、実績、
+ *   VS 先週の自分、シールド（連続記録の保護）
  *   データはブラウザの localStorage に保存されます。
  * ========================================================= */
 
 const STORE = 'tsuzuku-v1';
 const WD = ['日', '月', '火', '水', '木', '金', '土'];
-const AUTOMATIC = 66;      // Lally et al. (2010) 習慣が自動化するまでの平均日数
-const MAX_TICKETS = 3;     // お休みチケットの上限
-const STICKER_RATE = 0.25; // 変動報酬：勝利ごとにシールが出る確率
+const AUTOMATIC = 66;    // Lally et al. (2010) 習慣が自動化するまでの平均日数
+const MAX_SHIELDS = 3;   // シールドの上限
+const CRIT_RATE = 0.15;  // 変動報酬：クリティカル（EXP 2倍）の確率
+const EXP = { habit: 10, todo: 5, star: 10 };
 
 /* ---------- utils ---------- */
 const $ = (s, r = document) => r.querySelector(s);
@@ -26,25 +28,33 @@ const todayKey = () => dkey();
 /* ---------- state ---------- */
 function defaultState() {
   return {
-    version: 2,
+    version: 3,
     createdAt: dkey(),
     lastOpen: null,
     habits: [],     // { id, emoji, name, cue, tiny, identity, reward, remindAt, days, createdAt, archived }
-    logs: {},       // { 'YYYY-MM-DD': { habitId: { type } } }
-    todos: [],      // { id, text, frog, done, doneAt, createdAt }
+    logs: {},       // { 'YYYY-MM-DD': { habitId: { type, xp } } }
+    todos: [],      // { id, text, frog, done, doneAt, createdAt, xp }
     journal: {},    // { 'YYYY-MM-DD': { mood, text } }
     awarded: {},    // 1回きりのごほうび済みフラグ
-    tickets: 0,     // お休みチケット
-    frozen: {},     // チケットで守った日 { 'YYYY-MM-DD': true }
-    stickers: {},   // { '🦄': 2 }
+    exp: 0,
+    bestStreak: 0,
+    tickets: 0,     // シールド枚数
+    frozen: {},     // シールドで守った日
     lastProcessed: null,
     ticketNote: null,
     settings: { notify: false, journalAt: '21:00', skipOnb: false },
   };
 }
 function hydrate(obj) {
+  const fresh = obj.exp == null;
   const st = Object.assign(defaultState(), obj);
   st.settings = Object.assign(defaultState().settings, obj.settings || {});
+  if (fresh) { // 旧バージョンからの引き継ぎ：これまでの記録からEXPを算出
+    let n = 0;
+    for (const k in st.logs) n += Object.keys(st.logs[k]).length * EXP.habit;
+    n += st.todos.filter((t) => t.done).length * EXP.todo;
+    st.exp = n; st.migratedOn = dkey();
+  }
   return st;
 }
 function load() {
@@ -58,43 +68,37 @@ function save() {
 
 let S = load() || defaultState();
 let tab = 'today';
-let onb = null;        // 最初の30秒ガイドの状態
-let logMonth = 0;      // スタンプカードの表示月（0=今月）
+let onb = null;
+let logMonth = 0;
 let draftMood = null;
 
 /* ---------- content ---------- */
 const TEMPLATES = [
-  { emoji: '📚', name: '本を読む', cue: '寝る前', tiny: '1ページだけ読む', identity: '読書家' },
-  { emoji: '🏃', name: '運動する', cue: '帰宅したら', tiny: '靴をはいて外に出る', identity: '体を大切にする人' },
-  { emoji: '💧', name: '水を飲む', cue: '朝起きたら', tiny: 'コップ1杯だけ', identity: '健康的な人' },
-  { emoji: '🧘', name: 'ストレッチ', cue: 'お風呂のあと', tiny: '1ポーズだけ', identity: '体を大切にする人' },
-  { emoji: '✍️', name: '日記を書く', cue: '寝る前', tiny: '1行だけ書く', identity: '自分を知る人' },
-  { emoji: '🗣️', name: '英語の勉強', cue: '通勤・通学中', tiny: '単語を1つだけ', identity: '英語を話せる人' },
-  { emoji: '🧹', name: '片づけ', cue: '朝ごはんのあと', tiny: '1つだけ元に戻す', identity: '整った暮らしの人' },
-  { emoji: '😴', name: '早く寝る', cue: '23時になったら', tiny: 'スマホを置く', identity: '睡眠を大事にする人' },
+  { emoji: '💪', name: '筋トレ', cue: '帰宅したら', tiny: '腕立て1回', identity: '鍛えている男' },
+  { emoji: '🏃', name: 'ランニング', cue: '朝起きたら', tiny: 'ウェアに着替える', identity: '走れる体' },
+  { emoji: '📚', name: '読書', cue: '寝る前', tiny: '1ページだけ', identity: '知識で勝つ人' },
+  { emoji: '🗣️', name: '英語', cue: '通勤・通学中', tiny: '単語を1つ', identity: '英語で戦える人' },
+  { emoji: '💻', name: '勉強・資格', cue: '夕食のあと', tiny: '問題を1問', identity: '資格を取る人' },
+  { emoji: '💧', name: '水を飲む', cue: '朝起きたら', tiny: 'コップ1杯', identity: 'コンディションを整える人' },
+  { emoji: '🧘', name: '瞑想', cue: '歯みがきのあと', tiny: '深呼吸3回', identity: 'ブレない人' },
+  { emoji: '😴', name: '早く寝る', cue: '23時になったら', tiny: 'スマホを置く', identity: '睡眠を制する人' },
 ];
-const CUES = ['朝起きたら', '朝ごはんのあと', '歯みがきのあと', '通勤・通学中', '昼休み', '帰宅したら', 'お風呂のあと', '寝る前'];
+const CUES = ['朝起きたら', '朝ごはんのあと', '歯みがきのあと', '通勤・通学中', '昼休み', '帰宅したら', '夕食のあと', 'お風呂のあと', '寝る前'];
 
-const STAGES = [
-  { at: 0, icon: '🌰', name: 'たね' }, { at: 3, icon: '🌱', name: '芽' }, { at: 15, icon: '🌿', name: '若葉' },
-  { at: 40, icon: '🪴', name: '苗木' }, { at: 90, icon: '🌳', name: '大きな木' }, { at: 180, icon: '🌸', name: '花ざかり' },
-  { at: 360, icon: '🍎', name: '実り' }, { at: 700, icon: '🏞️', name: '森' },
+// ランク（レベルで昇格）
+const RANKS = [
+  [1, 'E', 'ルーキー'], [5, 'D', 'チャレンジャー'], [10, 'C', 'ファイター'], [18, 'B', 'エキスパート'],
+  [28, 'A', 'マスター'], [40, 'S', 'レジェンド'], [60, 'SS', 'アンストッパブル'],
 ];
-const stageOf = (wins) => {
-  let i = 0;
-  while (i + 1 < STAGES.length && wins >= STAGES[i + 1].at) i++;
-  return { ...STAGES[i], next: STAGES[i + 1] || null, idx: i };
-};
+function levelInfo(exp) {
+  let lv = 1, acc = 0, need = 100;
+  while (exp >= acc + need) { acc += need; lv++; need = 100 + (lv - 1) * 20; }
+  let r = RANKS[0];
+  for (const x of RANKS) if (lv >= x[0]) r = x;
+  return { lv, cur: exp - acc, need, rank: r[1], title: r[2] };
+}
 
-const STICKERS = [
-  ['🐣', 'ひよこ', 1], ['🍀', 'クローバー', 1], ['🍙', 'おにぎり', 1], ['🌼', 'おはな', 1], ['🐌', 'かたつむり', 1],
-  ['🍓', 'いちご', 1], ['🎈', 'ふうせん', 1], ['🐟', 'さかな', 1], ['🌙', 'おつきさま', 1], ['🧸', 'くま', 1],
-  ['🦊', 'きつね', 2], ['🐼', 'パンダ', 2], ['🌈', 'にじ', 2], ['🍰', 'ケーキ', 2], ['🐬', 'イルカ', 2], ['🦋', 'ちょうちょ', 2],
-  ['🦄', 'ユニコーン', 3], ['🐉', 'ドラゴン', 3], ['👑', 'おうかん', 3], ['💎', 'ダイヤ', 3],
-];
-const RARITY = { 1: '', 2: '（レア✨）', 3: '（超レア🌟）' };
-
-const PRAISE = ['ナイス！', 'その調子！', 'えらい！', 'いいね！', '今日もできた！', '一歩前進！', 'さすが！', '積み重ねてる！'];
+const PRAISE = ['ナイス。', 'いい流れだ。', '積み上げた。', '一歩前進。', 'その調子。', '強い。', '今日も勝った。', '継続は力。'];
 
 /* ---------- core logic ---------- */
 const activeHabits = () => S.habits.filter((h) => !h.archived);
@@ -118,8 +122,9 @@ function progressOn(d) {
 }
 const todayProgress = () => progressOn(new Date());
 const perfectOn = (k) => { const p = progressOn(parseKey(k)); return p.sched > 0 && p.done === p.sched; };
+function perfectDays() { return Object.keys(S.logs).filter(perfectOn).length; }
 
-// 🔥 連続日数：何かひとつでも「やった」日が続いている日数（チケットで守った日はつながる）
+// 🔥 連続日数：何かひとつでもクリアした日が続いている日数（シールドで守った日はつながる）
 function dayStreak() {
   let s = winsOn(todayKey()) > 0 ? 1 : 0;
   let d = addDays(new Date(), -1);
@@ -132,6 +137,16 @@ function dayStreak() {
   }
   return s;
 }
+function computeBest() {
+  let d = parseKey(S.createdAt), s = 0, best = 0;
+  const tk = todayKey();
+  while (dkey(d) <= tk) {
+    const k = dkey(d);
+    if (winsOn(k) > 0) { s++; best = Math.max(best, s); } else if (!S.frozen[k] && k !== tk) s = 0;
+    d = addDays(d, 1);
+  }
+  return best;
+}
 function aliveBefore(k) {
   let d = addDays(parseKey(k), -1);
   for (let i = 0; i < 3650; i++) {
@@ -143,8 +158,8 @@ function aliveBefore(k) {
   }
   return false;
 }
-// 🎫 休んだ日があれば、チケットで足りる場合だけ自動で使って連続記録を守る
-function processTickets() {
+// 🛡️ 休んだ日があれば、シールドで足りる場合だけ自動で使って連続記録を守る
+function processShields() {
   const yest = dkey(addDays(new Date(), -1));
   if (!S.lastProcessed) { S.lastProcessed = yest; return; }
   let d = addDays(parseKey(S.lastProcessed), 1), run = [], used = 0;
@@ -166,26 +181,95 @@ function processTickets() {
 }
 
 /* ---------- rewards ---------- */
-function giveSticker(force) {
-  if (!force && Math.random() > STICKER_RATE) return;
-  const r = Math.random();
-  const rar = r < 0.06 ? 3 : r < 0.32 ? 2 : 1;
-  const [e, name] = pick(STICKERS.filter((s) => s[2] === rar));
-  const isNew = !S.stickers[e];
-  S.stickers[e] = (S.stickers[e] || 0) + 1;
-  toast(`🎁 シールをゲット！ <b>${e} ${name}</b>${RARITY[rar]}${isNew ? ' <b>NEW</b>' : ''}`);
-  if (rar >= 2) confetti(70);
+function gainExp(base, canCrit = true) {
+  const before = levelInfo(S.exp);
+  const crit = canCrit && Math.random() < CRIT_RATE;
+  const amt = crit ? base * 2 : base;
+  S.exp += amt;
+  const after = levelInfo(S.exp);
+  if (after.lv > before.lv) {
+    const rankUp = after.rank !== before.rank;
+    celebrate(rankUp ? '🏆' : '⚡', rankUp ? `RANK UP!  ${after.rank}` : `LEVEL UP!  LV.${after.lv}`,
+      rankUp ? `ランク「${after.title}」に昇格。<br>積み上げた分だけ、確実に強くなっている。`
+        : `LV.${after.lv} 到達。次のレベルまで ${after.need} EXP。`);
+    confetti(rankUp ? 200 : 120);
+  }
+  return { amt, crit };
+}
+const expTag = ({ amt, crit }) => ` <b class="exp">+${amt} EXP</b>${crit ? ' <span class="crit">CRITICAL!</span>' : ''}`;
+
+function missions() {
+  const k = todayKey(), p = todayProgress();
+  const todosDone = S.todos.filter((t) => t.done && t.doneAt === k).length;
+  return [
+    { id: 'all', name: '今日の習慣をすべてクリア', done: p.sched > 0 && p.done === p.sched, exp: 30, prog: `${p.done}/${p.sched}`, hide: p.sched === 0 },
+    { id: 'todo3', name: 'やることを3件片づける', done: todosDone >= 3, exp: 15, prog: `${Math.min(3, todosDone)}/3` },
+    { id: 'log', name: 'ひとこと日誌を書く', done: !!S.journal[k], exp: 10, prog: S.journal[k] ? '1/1' : '0/1' },
+  ].filter((m) => !m.hide);
+}
+function checkMissions() {
+  const k = todayKey();
+  for (const m of missions()) {
+    const key = `m:${k}:${m.id}`;
+    if (m.done && !S.awarded[key]) {
+      S.awarded[key] = true;
+      const r = gainExp(m.exp, false);
+      toast(`🎯 MISSION CLEAR：${m.name}${expTag(r)}`);
+      if (missions().every((x) => S.awarded[`m:${k}:${x.id}`])) {
+        celebrate('🎯', 'ALL MISSIONS CLEAR', '今日のミッションを全部達成。完全勝利だ。');
+      }
+    }
+  }
+}
+
+const ACHIEVEMENTS = [
+  ['first', '🎯', '初陣', '初めてクリア', 1, (c) => c.total >= 1],
+  ['t10', '🥉', '10クリア', '通算10回', 1, (c) => c.total >= 10],
+  ['t50', '🥈', '50クリア', '通算50回', 2, (c) => c.total >= 50],
+  ['t100', '🥇', '100クリア', '通算100回', 2, (c) => c.total >= 100],
+  ['t300', '💎', '300クリア', '通算300回', 3, (c) => c.total >= 300],
+  ['t1000', '👑', '1000クリア', '通算1000回', 3, (c) => c.total >= 1000],
+  ['s3', '🔥', '3日連続', '連続3日', 1, (c) => c.best >= 3],
+  ['s7', '🔥', '1週間', '連続7日', 1, (c) => c.best >= 7],
+  ['s14', '🔥', '2週間', '連続14日', 2, (c) => c.best >= 14],
+  ['s30', '🚀', '1か月', '連続30日', 2, (c) => c.best >= 30],
+  ['s66', '🧠', '自動化', '連続66日', 3, (c) => c.best >= 66],
+  ['s100', '🗻', '100日', '連続100日', 3, (c) => c.best >= 100],
+  ['p1', '⭐', 'パーフェクト', '全習慣クリアの日', 1, (c) => c.perfect >= 1],
+  ['p10', '🌟', 'パーフェクト×10', '全クリア10日', 2, (c) => c.perfect >= 10],
+  ['p30', '✨', 'パーフェクト×30', '全クリア30日', 3, (c) => c.perfect >= 30],
+  ['d10', '🗡️', 'タスクハンター', 'やること10件', 1, (c) => c.todos >= 10],
+  ['d50', '⚔️', 'タスクスレイヤー', 'やること50件', 2, (c) => c.todos >= 50],
+  ['d200', '🐉', 'タスクキング', 'やること200件', 3, (c) => c.todos >= 200],
+  ['sh1', '🛡️', '不屈', 'シールドで記録を守った', 1, (c) => c.shields >= 1],
+  ['lv10', '⚡', 'LV.10', 'レベル10到達', 2, (c) => c.lv >= 10],
+  ['lv30', '🏆', 'LV.30', 'レベル30到達', 3, (c) => c.lv >= 30],
+];
+function achCtx() {
+  return {
+    total: totalWins(), best: Math.max(S.bestStreak, dayStreak()), perfect: perfectDays(),
+    todos: S.todos.filter((t) => t.done).length, shields: Object.keys(S.frozen).length, lv: levelInfo(S.exp).lv,
+  };
+}
+function checkAchievements(silent) {
+  const c = achCtx();
+  for (const [id, icon, name, desc, , test] of ACHIEVEMENTS) {
+    if (!S.awarded[`a:${id}`] && test(c)) {
+      S.awarded[`a:${id}`] = true;
+      if (!silent) celebrate(icon, `実績解除：${name}`, desc);
+    }
+  }
 }
 
 const HABIT_MILESTONES = [
-  [1, '🌟', '最初の一歩！', 'はじめるのが一番むずかしい。もうそれをクリアしました。'],
-  [7, '🔥', '7回達成！', 'リズムができはじめています。'],
-  [21, '🥉', '21回達成！', '「いつものこと」になってきました。'],
-  [30, '🥈', '30回達成！', 'もう立派な習慣です。'],
-  [AUTOMATIC, '🧠', `${AUTOMATIC}回達成！`, '研究では、平均66回くらいで行動は「自動」になると言われています。'],
-  [100, '🥇', '100回達成！', 'あなたは本物の「続く人」です。'],
-  [200, '💎', '200回達成！', 'ここまで来る人はほとんどいません。'],
-  [365, '👑', '365回達成！', '1年分の積み重ね。人生が変わるレベルです。'],
+  [1, '🎯', '初クリア', 'はじめるのが一番むずかしい。もう突破した。'],
+  [7, '🔥', '7回クリア', 'リズムができはじめている。'],
+  [21, '🥉', '21回クリア', '「やるのが当たり前」になってきた。'],
+  [30, '🥈', '30回クリア', 'もう立派な習慣だ。'],
+  [AUTOMATIC, '🧠', `${AUTOMATIC}回クリア`, '研究では平均66回で行動は自動化すると言われている。体に刻まれた。'],
+  [100, '🥇', '100回クリア', '3ケタの大台。本物だ。'],
+  [200, '💎', '200回クリア', 'ここまで来る人間はほとんどいない。'],
+  [365, '👑', '365回クリア', '1年分の積み上げ。人生が変わるレベル。'],
 ];
 function checkHabitMilestone(h) {
   const n = totalOf(h);
@@ -194,37 +278,40 @@ function checkHabitMilestone(h) {
     if (n >= at && !S.awarded[key]) {
       S.awarded[key] = true;
       celebrate(icon, `${esc(h.emoji)} ${esc(h.name)}：${title}`,
-        `${text}${h.identity ? `<br><br>「${esc(h.identity)}」への${n}票目が入りました。` : ''}`);
+        `${text}${h.identity ? `<br><br>🎯「${esc(h.identity)}」に ${n} ポイント。` : ''}`);
       confetti(120);
       break;
     }
   }
 }
 
-// 勝利のあとの共通処理：植物の成長・コンプリート・チケット・シール
-function afterWin(prevTotal) {
+// クリア後の共通処理
+function afterWin() {
   const k = todayKey();
-  const a = stageOf(prevTotal), b = stageOf(totalWins());
-  if (b.idx > a.idx) celebrate(b.icon, `「${b.name}」に育ちました！`, 'あなたのコツコツが、目に見える形になってきました。');
-
   const p = todayProgress();
-  let perfect = false;
   if (p.sched > 0 && p.done === p.sched && !S.awarded[`perfect:${k}`]) {
-    S.awarded[`perfect:${k}`] = true; perfect = true;
-    celebrate('💮', '今日コンプリート！', 'ぜんぶの習慣をやりきりました。<br>今日のスタンプは「花まる」です。');
+    S.awarded[`perfect:${k}`] = true;
+    celebrate('⭐', 'PERFECT DAY', '今日の習慣をすべてクリア。<br>この1日は、完全勝利だ。');
     confetti(180);
   }
-
   const st = dayStreak();
-  if (st > 0 && st % 7 === 0 && !S.awarded[`ticket:${k}`]) {
-    S.awarded[`ticket:${k}`] = true;
-    if (S.tickets < MAX_TICKETS) {
-      S.tickets++;
-      celebrate('🎫', `${st}日連続！お休みチケットをゲット`,
-        'うっかり休んでしまった日に自動で使われて、🔥連続記録を守ってくれます。<br>（7日続けるごとに1枚・最大3枚）');
+  if (st > S.bestStreak) {
+    const prev = S.bestStreak;
+    S.bestStreak = st;
+    if (prev >= 3 && !S.awarded[`pr:${k}`]) {
+      S.awarded[`pr:${k}`] = true;
+      celebrate('🏆', `自己ベスト更新！ ${st}日連続`, `これまでの記録は${prev}日。<br>過去の自分を超えた。`);
     }
   }
-  giveSticker(perfect);
+  if (st > 0 && st % 7 === 0 && !S.awarded[`ticket:${k}`]) {
+    S.awarded[`ticket:${k}`] = true;
+    if (S.tickets < MAX_SHIELDS) {
+      S.tickets++;
+      celebrate('🛡️', `${st}日連続！ シールド獲得`, 'サボってしまった日に自動で発動し、🔥連続記録を守る。<br>（7日連続ごとに1枚・最大3枚）');
+    }
+  }
+  checkMissions();
+  checkAchievements(false);
 }
 
 /* ---------- actions ---------- */
@@ -233,41 +320,44 @@ function toggleHabit(id, type = 'full') {
   if (!h) return;
   const k = todayKey();
   S.logs[k] = S.logs[k] || {};
-  if (S.logs[k][id]) {
+  const cur = S.logs[k][id];
+  if (cur) {
+    S.exp = Math.max(0, S.exp - (cur.xp ?? EXP.habit));
     delete S.logs[k][id];
     if (!Object.keys(S.logs[k]).length) delete S.logs[k];
-    toast('取り消しました');
+    toast('取り消した');
     save(); render();
     return;
   }
-  const before = totalWins();
-  S.logs[k][id] = { type };
+  const r = gainExp(EXP.habit);
+  S.logs[k][id] = { type, xp: r.amt };
   const p = todayProgress(), rem = p.sched - p.done;
-  toast(`${esc(h.emoji)} ${pick(PRAISE)}${rem === 1 ? '　<b>あと1つでコンプリート！</b>' : ''}`);
-  confetti(40);
+  toast(`${esc(h.emoji)} ${pick(PRAISE)}${expTag(r)}${rem === 1 ? '<br>残り1つでパーフェクト' : ''}`);
+  confetti(r.crit ? 90 : 40);
   checkHabitMilestone(h);
-  afterWin(before);
-  if (h.reward) toast(`🎁 ごほうびタイム：${esc(h.reward)}`);
-  save(); render(); popPlant();
+  afterWin();
+  if (h.reward) toast(`🎁 ごほうび：${esc(h.reward)}`);
+  save(); render(); popRing();
 }
 
 function addTodo(text) {
   text = text.trim();
   if (!text) return;
-  S.todos.push({ id: uid(), text, frog: false, done: false, doneAt: null, createdAt: todayKey() });
+  S.todos.push({ id: uid(), text, frog: false, done: false, doneAt: null, createdAt: todayKey(), xp: 0 });
   save(); render();
   const input = $('#todoInput'); if (input) input.focus();
 }
 function toggleTodo(id) {
   const t = S.todos.find((x) => x.id === id);
   if (!t) return;
-  if (t.done) { t.done = false; t.doneAt = null; save(); render(); return; }
-  const before = totalWins();
+  if (t.done) { t.done = false; t.doneAt = null; S.exp = Math.max(0, S.exp - (t.xp || 0)); t.xp = 0; save(); render(); return; }
   t.done = true; t.doneAt = todayKey();
-  toast(t.frog ? '⭐ いちばん大事なことを片づけた！' : `✅ ${pick(PRAISE)}`);
+  const r = gainExp(t.frog ? EXP.star : EXP.todo);
+  t.xp = r.amt;
+  toast(`${t.frog ? '★ 最重要タスク撃破。' : `✔ ${pick(PRAISE)}`}${expTag(r)}`);
   confetti(t.frog ? 80 : 30);
-  afterWin(before);
-  save(); render(); popPlant();
+  afterWin();
+  save(); render(); popRing();
 }
 function starTodo(id) {
   const t = S.todos.find((x) => x.id === id);
@@ -280,22 +370,20 @@ function starTodo(id) {
 function deleteTodo(id) { S.todos = S.todos.filter((x) => x.id !== id); save(); render(); }
 
 /* ---------- render: top ---------- */
-function renderTop() {
-  $('#ticketBadge').textContent = `🎫 ${S.tickets}`;
-}
+function renderTop() { $('#ticketBadge').textContent = `🛡️ ${S.tickets}`; }
 
-/* ---------- render: onboarding（最初の30秒ガイド） ---------- */
+/* ---------- render: onboarding ---------- */
 function renderOnboarding() {
   const dots = (n) => `<div class="dots">${[1, 2, 3].map((i) => `<i class="${i === n ? 'on' : ''}"></i>`).join('')}</div>`;
   const first = !activeHabits().length && !totalWins();
   if (!onb || onb.step === 1) {
     return `<section class="card onb">
       ${dots(1)}
-      ${first ? `<div class="seed">🌰</div><h2>このタネを育てよう</h2>
-        <p class="muted">毎日の小さな「やった！」で、タネが芽を出し、木に育ちます。</p>` : '<h2>新しい習慣</h2>'}
-      <h2 style="font-size:17px">続けたいことを、まず1つ選ぼう</h2>
+      ${first ? `<div class="label">LV.1 / RANK E</div><h2>ここから、積み上げが始まる</h2>
+        <p class="muted">毎日クリアするたびにEXPが貯まり、レベルとランクが上がっていく。</p>` : '<h2>新しい習慣</h2>'}
+      <h2 style="font-size:17px">鍛えたいことを、まず1つ選べ</h2>
       <div class="templates">${TEMPLATES.map((t, i) => `<button data-act="onb-tpl" data-i="${i}"><span>${t.emoji}</span>${t.name}</button>`).join('')}</div>
-      <form id="onbCustom" class="todo-add"><input name="t" placeholder="自分で書く（例：ギターを弾く）" autocomplete="off"><button class="primary">次へ</button></form>
+      <form id="onbCustom" class="todo-add"><input name="t" placeholder="自分で書く（例：ギター）" autocomplete="off"><button class="primary">次へ</button></form>
       ${first ? '<button class="linkbtn" data-act="onb-skip">習慣はあとで（やることリストだけ使う）</button>'
         : '<button class="linkbtn" data-act="onb-cancel">やめる</button>'}
     </section>`;
@@ -304,9 +392,9 @@ function renderOnboarding() {
     const chips = [...new Set([onb.cue, ...CUES].filter(Boolean))];
     return `<section class="card onb">
       ${dots(2)}
-      <div class="seed" style="font-size:44px">${esc(onb.emoji)}</div>
+      <div class="seed" style="font-size:40px">${esc(onb.emoji)}</div>
       <h2>「${esc(onb.name)}」は、いつやる？</h2>
-      <p class="muted small">毎日していることの「あと」にくっつけると、忘れにくくなります。</p>
+      <p class="muted small">毎日必ずやっている行動の「直後」に固定する。これが実行率を上げる最短ルート。</p>
       <div class="chips">${chips.map((c) => `<button data-act="onb-cue" data-v="${esc(c)}" class="${c === onb.cue ? 'on' : ''}">${esc(c)}</button>`).join('')}</div>
       <form id="onbCueForm" class="todo-add"><input name="t" placeholder="自分で書く（例：コーヒーを淹れたら）" autocomplete="off"><button class="primary">決定</button></form>
       <button class="linkbtn" data-act="onb-back">もどる</button>
@@ -315,17 +403,17 @@ function renderOnboarding() {
   const h = S.habits.find((x) => x.id === onb.habitId);
   return `<section class="card onb">
     ${dots(3)}
-    <h2>できた！🎉 さっそく今日の分をやってみよう</h2>
+    <div class="label">FIRST MISSION</div>
+    <h2>最初の1回、今やろう</h2>
     <div class="try">
       <div class="e">${esc(h.emoji)}</div>
       <b>${esc(h.name)}</b>
-      <div class="muted" style="margin-top:6px">まずは「${esc(h.tiny || '2分だけ')}」でOK。<br>小さくても、やれば1回です。</div>
+      <div class="muted" style="margin-top:6px">最低ライン「${esc(h.tiny || '2分だけ')}」でクリア扱い。<br>ハードルは低くていい。ゼロにしないことが勝ち。</div>
     </div>
-    <button class="primary big" data-act="onb-done">やった！</button>
+    <button class="primary big" data-act="onb-done">クリア！</button>
     <div><button class="linkbtn" data-act="onb-later">あとでやる</button></div>
   </section>`;
 }
-
 function finishOnbHabit(cue) {
   const h = {
     id: uid(), createdAt: todayKey(), archived: false, days: [0, 1, 2, 3, 4, 5, 6], remindAt: '', reward: '',
@@ -340,12 +428,15 @@ function finishOnbHabit(cue) {
 function banners() {
   const t = todayKey(), d = new Date();
   let out = '';
-  if (S.ticketNote && S.ticketNote.date === t) {
-    out += `<div class="banner warn">🎫 お休みチケットを${S.ticketNote.n}枚使って、🔥連続記録を守りました！ 今日もひとつやって、つなげよう。</div>`;
+  if (S.migratedOn === t) {
+    out += `<div class="banner">⚡ <b>アップデート完了。</b> これまでの記録から <b>${S.exp} EXP</b> を算出し、LV.${levelInfo(S.exp).lv} からスタート。</div>`;
   }
-  if (S.welcomeBack === t) out += '<div class="banner">🌤️ <b>おかえりなさい！</b> 戻ってきたことが一番の勝利です。今日はひとつだけ、小さくやってみよう。</div>';
-  else if (d.getDate() === 1) out += '<div class="banner">🗓️ <b>新しい月のはじまり！</b> スタンプカードも新しいページです。</div>';
-  else if (d.getDay() === 1 && weekStats(-1).days > 0) out += '<div class="banner">🌅 <b>新しい週のスタート！</b> <button class="linkbtn" data-act="gotolog" style="padding:0">「先週のあなた」を見る →</button></div>';
+  if (S.ticketNote && S.ticketNote.date === t) {
+    out += `<div class="banner warn">🛡️ シールドが${S.ticketNote.n}枚発動。🔥連続記録は守られた。今日クリアしてつなげ。</div>`;
+  }
+  if (S.welcomeBack === t) out += '<div class="banner">🔄 <b>おかえり。</b> 戻ってきた時点で勝ち。今日は最低ラインを1つだけクリアしよう。</div>';
+  else if (d.getDate() === 1) out += '<div class="banner">🗓️ <b>新しい月。</b> 今月の達成率はゼロからスタート。最初の1日を取りにいこう。</div>';
+  else if (d.getDay() === 1 && weekScore(-1).days > 0) out += '<div class="banner">🥊 <b>新しい週。</b> <button class="linkbtn" data-act="gotolog" style="padding:0">先週の結果を見る →</button></div>';
   return out;
 }
 
@@ -353,23 +444,24 @@ function habitRow(h) {
   const k = todayKey();
   const done = !!logOf(h, k);
   const total = totalOf(h);
-  const sub = done ? `✓ ${total}回目！`
-    : [h.cue ? `🕖 ${esc(h.cue)}` : '', h.tiny ? `しんどい日は「${esc(h.tiny)}」でOK` : ''].filter(Boolean).join('　');
+  const sub = done ? `✔ CLEAR`
+    : [h.cue ? `🕖 ${esc(h.cue)}` : '', h.tiny ? `最低ライン：${esc(h.tiny)}` : ''].filter(Boolean).join('　');
   return `<div class="habit ${done ? 'done' : ''}">
-    <button class="tap" data-act="habit" data-id="${h.id}" aria-label="${done ? '取り消す' : 'やった'}">${done ? '✓' : ''}</button>
+    <button class="tap" data-act="habit" data-id="${h.id}" aria-label="${done ? '取り消す' : 'クリア'}">${done ? '✔' : ''}</button>
     <div class="body" data-act="edithabit" data-id="${h.id}">
       <div class="name">${esc(h.emoji)} ${esc(h.name)}</div>
       ${sub ? `<div class="sub">${sub}</div>` : ''}
     </div>
+    <div class="cnt"><b>${total}</b>回</div>
   </div>`;
 }
 
 function todoRow(t) {
-  const age = !t.done && t.createdAt < todayKey() ? ` <span class="small muted">${diffDays(t.createdAt, todayKey())}日前〜</span>` : '';
+  const age = !t.done && t.createdAt < todayKey() ? ` <span class="small muted">${diffDays(t.createdAt, todayKey())}日経過</span>` : '';
   return `<div class="todo ${t.done ? 'done' : ''} ${t.frog && !t.done ? 'star-on' : ''}">
-    <button class="check" data-act="todo" data-id="${t.id}" aria-label="完了">${t.done ? '✓' : ''}</button>
+    <button class="check" data-act="todo" data-id="${t.id}" aria-label="完了">${t.done ? '✔' : ''}</button>
     <span class="txt">${esc(t.text)}${age}</span>
-    ${t.done ? '' : `<button class="star ${t.frog ? 'on' : ''}" data-act="star" data-id="${t.id}" title="いちばん大事にする">${t.frog ? '★' : '☆'}</button>`}
+    ${t.done ? '' : `<button class="star ${t.frog ? 'on' : ''}" data-act="star" data-id="${t.id}" title="最重要にする">${t.frog ? '★' : '☆'}</button>`}
     <button class="del" data-act="deltodo" data-id="${t.id}" aria-label="削除">✕</button>
   </div>`;
 }
@@ -378,69 +470,84 @@ function renderToday() {
   if (onb || (!activeHabits().length && !S.settings.skipOnb)) return renderOnboarding();
   const k = todayKey(), d = new Date();
   const p = todayProgress(), rem = p.sched - p.done;
-  const tw = totalWins(), st = stageOf(tw), streak = dayStreak(), winsT = winsOn(k);
-  const thirsty = p.sched > 0 && p.done === 0 && winsT === 0;
-  const full = p.sched > 0 ? rem === 0 : winsT > 0;
-  const pct = p.sched > 0 ? p.done / p.sched : (winsT > 0 ? 1 : 0);
-  const bubble = p.sched === 0 ? (winsT > 0 ? 'ありがとう！元気いっぱい🌟' : '今日はのんびりの日🍃')
-    : p.done === 0 ? (winsT > 0 ? 'ありがとう！習慣もやってみる？' : 'のどかわいたな…💧')
-      : rem === 0 ? 'おなかいっぱい！ありがとう🌟'
-        : `あと${rem}つで満タン！`;
-  const C = 2 * Math.PI * 52;
-  const nextTxt = st.next ? `次の「${st.next.name}」まで あと${st.next.at - tw}回` : '最後まで育ちきりました！';
-  const stageProg = st.next ? ((tw - st.at) / (st.next.at - st.at)) * 100 : 100;
+  const L = levelInfo(S.exp), streak = dayStreak(), best = Math.max(S.bestStreak, streak), winsT = winsOn(k);
+  const pct = p.sched > 0 ? Math.round((p.done / p.sched) * 100) : (winsT > 0 ? 100 : 0);
+  const full = pct === 100;
+  const C = 2 * Math.PI * 50;
+  let status, cls = '';
+  if (p.sched === 0) status = winsT > 0 ? '今日の行動は記録済み。ナイス。' : '今日は習慣オフの日。やることを1つ片づけよう。';
+  else if (p.done === 0) {
+    status = streak > 0 ? `🔥${streak}日の連続記録がかかっている。最初の1つで流れを作れ。` : 'まだ0%。最初の1つで流れを作れ。';
+    cls = 'hot';
+  } else if (rem === 0) { status = '🏁 COMPLETE。今日は勝ちだ。'; cls = 'win'; }
+  else status = rem === 1 ? '残り1つ。パーフェクトは目の前。' : `残り${rem}つ。このまま押し切れ。`;
 
   const todayHabits = activeHabits().filter((h) => isSched(h, d));
   const rest = activeHabits().filter((h) => !isSched(h, d));
   const open = S.todos.filter((t) => !t.done).sort((a, b) => (b.frog - a.frog) || (a.createdAt < b.createdAt ? -1 : 1));
   const doneT = S.todos.filter((t) => t.done && t.doneAt === k);
+  const ms = missions();
 
   return `
   ${banners()}
-  <section class="card hero">
-    <div class="ring-wrap ${thirsty ? 'thirsty' : ''} ${full ? 'full' : ''}">
-      <svg viewBox="0 0 120 120" aria-hidden="true">
-        <defs><linearGradient id="ringGrad" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#5b8def"/><stop offset="1" stop-color="#34b27b"/></linearGradient></defs>
-        <circle class="ring-bg" cx="60" cy="60" r="52"/>
-        <circle class="ring-fg" cx="60" cy="60" r="52" stroke-dasharray="${C}" stroke-dashoffset="${C * (1 - pct)}"/>
-      </svg>
-      <div class="plant" id="plant" title="${st.name}">${st.icon}</div>
+  <section class="card">
+    <div class="hero">
+      <div class="ring-wrap ${full ? 'full' : ''}" id="ring">
+        <svg viewBox="0 0 120 120" aria-hidden="true">
+          <defs><linearGradient id="ringGrad" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ff7a1a"/><stop offset="1" stop-color="#f5c542"/></linearGradient></defs>
+          <circle class="ring-bg" cx="60" cy="60" r="50"/>
+          <circle class="ring-fg" cx="60" cy="60" r="50" stroke-dasharray="${C}" stroke-dashoffset="${C * (1 - pct / 100)}"/>
+        </svg>
+        <div class="ring-center"><div class="num">${pct}<small>%</small></div><div class="label">TODAY</div></div>
+      </div>
+      <div class="hero-info">
+        <div class="rankline">
+          <div class="rank">${L.rank}</div>
+          <div class="lv">LV.${L.lv}<small>${L.title}</small></div>
+        </div>
+        <div class="bar"><i style="width:${(L.cur / L.need) * 100}%"></i></div>
+        <div class="small muted" style="margin-top:3px">次のレベルまで <b style="color:var(--cyan)">${L.need - L.cur} EXP</b></div>
+        <div class="streak"><span class="fire">🔥 <b>${streak}</b>日連続</span><span>BEST <b>${best}</b></span></div>
+      </div>
     </div>
-    <div class="hero-info">
-      <div class="bubble ${thirsty ? 'thirsty-b' : ''}">${bubble}</div>
-      <div class="streak">🔥 <b>${streak}</b> 日連続</div>
-      <div class="small muted">${st.icon} ${st.name}・${nextTxt}</div>
-      <div class="bar" style="margin-top:4px"><i style="width:${stageProg}%"></i></div>
-    </div>
+    <div class="status ${cls}">${status}</div>
   </section>
 
   <section class="card">
-    <h2>今日の習慣 <span class="sub">${p.done} / ${p.sched}</span></h2>
-    ${todayHabits.length ? todayHabits.map(habitRow).join('') : '<div class="empty small">今日の習慣はありません</div>'}
-    ${rest.length ? `<div class="small muted" style="margin-top:6px">今日はお休み：${rest.map((h) => esc(h.emoji + h.name)).join('、')}</div>` : ''}
+    <h2><span class="label">Daily Mission</span><span class="sub">${ms.filter((m) => m.done).length}/${ms.length}</span></h2>
+    ${ms.map((m) => `<div class="mission ${m.done ? 'done' : ''}">
+      <div class="ck">${m.done ? '✔' : ''}</div><div class="t">${m.name} <span class="p">${m.prog}</span></div><div class="x">+${m.exp} EXP</div>
+    </div>`).join('')}
+  </section>
+
+  <section class="card">
+    <h2><span class="label">Habits</span> 今日の習慣 <span class="sub">${p.done} / ${p.sched}</span></h2>
+    ${todayHabits.length ? todayHabits.map(habitRow).join('') : '<div class="empty small">今日の習慣はなし</div>'}
+    ${rest.length ? `<div class="small muted" style="margin-top:6px">今日はオフ：${rest.map((h) => esc(h.emoji + h.name)).join('、')}</div>` : ''}
     <button class="addbtn" data-act="addhabit">＋ 習慣を追加</button>
-    ${todayHabits.length ? '<div class="small muted" style="text-align:center;margin-top:6px">○をタップで「やった！」・名前をタップで編集</div>' : ''}
+    ${todayHabits.length ? '<div class="small muted" style="text-align:center;margin-top:6px">□をタップでクリア・名前をタップで編集</div>' : ''}
   </section>
 
   <section class="card">
-    <h2>やること <span class="sub">${doneT.length ? `今日 ${doneT.length}件 完了` : ''}</span></h2>
+    <h2><span class="label">Tasks</span> やること <span class="sub">${doneT.length ? `今日 ${doneT.length}件 撃破` : ''}</span></h2>
     <form class="todo-add" id="todoForm">
-      <input id="todoInput" placeholder="やることを書く…" autocomplete="off">
+      <input id="todoInput" placeholder="やることを追加…" autocomplete="off">
       <button class="primary" type="submit">追加</button>
     </form>
-    ${open.length >= 2 && !open.some((t) => t.frog) ? '<div class="small muted" style="margin-bottom:4px">☆を押すと「いちばん大事」が一番上に来ます</div>' : ''}
+    ${open.length >= 2 && !open.some((t) => t.frog) ? '<div class="small muted" style="margin-bottom:4px">☆で「最重要」に指定 → 一番上に固定・EXP 2倍</div>' : ''}
     ${open.map(todoRow).join('')}
     ${doneT.map(todoRow).join('')}
-    ${!open.length && !doneT.length ? '<div class="empty small">書き出すだけで、頭がすっきりします</div>' : ''}
+    ${!open.length && !doneT.length ? '<div class="empty small">頭の中のタスクを全部書き出そう</div>' : ''}
   </section>`;
 }
 
-/* ---------- render: log（きろく） ---------- */
-function weekStats(offset) {
+/* ---------- render: data ---------- */
+function weekScore(offset, uptoToday = false) {
   const today = new Date();
   const mon = addDays(today, -((today.getDay() + 6) % 7) + 7 * offset);
+  const limit = uptoToday ? (today.getDay() + 6) % 7 : 6;
   let days = 0, wins = 0, perfect = 0;
-  for (let i = 0; i < 7; i++) {
+  for (let i = 0; i <= limit; i++) {
     const k = dkey(addDays(mon, i));
     if (k > todayKey()) break;
     const w = winsOn(k);
@@ -451,53 +558,76 @@ function weekStats(offset) {
   return { days, wins, perfect };
 }
 
-function weeklyCard() {
-  const lw = weekStats(-1), pw = weekStats(-2);
-  if (!lw.days && !pw.days) return '';
-  const diff = lw.days - pw.days;
-  const msg = !pw.days ? 'はじめての1週間、おつかれさま！'
-    : diff > 0 ? `先々週より${diff}日多くスタンプを押せました！📈`
-      : diff === 0 ? 'ペースをキープ！安定してきました。'
-        : '先週はひと休み。今週は「1日だけ多く」を目指そう。';
+function vsCard() {
+  const me = weekScore(0, true), rival = weekScore(-1, true);
+  const lw = weekScore(-1), pw = weekScore(-2);
+  if (!me.wins && !rival.wins && !lw.wins) return '';
+  const diff = me.wins - rival.wins;
+  const verdict = diff > 0 ? `<div class="verdict lead">リード中 +${diff}</div>`
+    : diff < 0 ? `<div class="verdict behind">あと${-diff}でタイ。巻き返せ</div>`
+      : '<div class="verdict">互角。次の1つで抜け出せ</div>';
+  const res = lw.wins || pw.wins
+    ? `先週の結果：${lw.wins > pw.wins ? '<span class="res-win">WIN</span>' : lw.wins === pw.wins ? 'DRAW' : 'LOSE'}（${lw.wins} vs ${pw.wins}）`
+    : '';
   const isMon = new Date().getDay() === 1;
   return `<section class="card">
-    <h2>📮 先週のあなた ${isMon ? '<span class="new">NEW</span>' : ''}</h2>
-    <div class="week3">
-      <div><b>${lw.days}</b><small>スタンプの日</small></div>
-      <div><b>${lw.wins}</b><small>やった回数</small></div>
-      <div><b>${lw.perfect}</b><small>💮 花まるの日</small></div>
+    <h2><span class="label">VS 先週の自分</span>${isMon ? '<span class="new">NEW WEEK</span>' : ''}<span class="sub">同じ曜日までのクリア数</span></h2>
+    <div class="vs">
+      <div class="me"><div class="num">${me.wins}</div><small>今週のあなた</small></div>
+      <div class="vsx">VS</div>
+      <div><div class="num">${rival.wins}</div><small>先週のあなた</small></div>
     </div>
-    <div>${msg}</div>
-    <div class="small muted" style="margin-top:4px">🎯 今週の目標：スタンプ ${Math.min(7, lw.days + 1)}日（比べる相手は、過去の自分だけ）</div>
+    ${verdict}
+    ${res ? `<div class="prev">${res}</div>` : ''}
   </section>`;
 }
 
-function stampCard() {
+function statsCard() {
+  const today = new Date();
+  const first = new Date(today.getFullYear(), today.getMonth(), 1);
+  const elapsed = today.getDate();
+  let active = 0;
+  for (let i = 0; i < elapsed; i++) if (winsOn(dkey(addDays(first, i))) > 0) active++;
+  const rate = Math.round((active / elapsed) * 100);
+  return `<section class="card">
+    <h2><span class="label">Status</span></h2>
+    <div class="stats">
+      <div class="stat"><span class="num">${totalWins()}</span><small>通算クリア</small></div>
+      <div class="stat"><span class="num">${Math.max(S.bestStreak, dayStreak())}<small>日</small></span><small>自己ベスト連続</small></div>
+      <div class="stat"><span class="num">${rate}<small>%</small></span><small>今月の稼働率</small></div>
+      <div class="stat"><span class="num">${perfectDays()}</span><small>パーフェクトデー</small></div>
+    </div>
+  </section>`;
+}
+
+function gridCard() {
   const base = new Date(); base.setDate(1); base.setMonth(base.getMonth() + logMonth);
   const y = base.getFullYear(), m = base.getMonth();
   const first = new Date(y, m, 1).getDay(), days = new Date(y, m + 1, 0).getDate();
   const tk = todayKey();
   let cells = WD.map((w) => `<div class="wd">${w}</div>`).join('');
   for (let i = 0; i < first; i++) cells += '<div class="c blank"></div>';
-  let count = 0;
+  let active = 0;
   for (let i = 1; i <= days; i++) {
     const k = dkey(new Date(y, m, i));
+    const w = winsOn(k);
     let cls = 'c', mark = '';
     if (k > tk) cls += ' future';
-    else if (winsOn(k) > 0) { cls += ' has'; mark = perfectOn(k) ? '💮' : '🌸'; count++; }
-    else if (S.frozen[k]) { cls += ' has'; mark = '🎫'; }
+    else if (w > 0) { cls += ` ${w >= 6 ? 'l4' : w >= 4 ? 'l3' : w >= 2 ? 'l2' : 'l1'}`; active++; if (perfectOn(k)) cls += ' perfect'; }
+    else if (S.frozen[k]) mark = '🛡️';
     if (k === tk) cls += ' today';
-    cells += `<div class="${cls}" title="${k}"><span class="n">${i}</span>${mark}</div>`;
+    cells += `<div class="${cls}" title="${k}：${w}クリア"><span class="n">${i}</span>${mark}</div>`;
   }
   return `<section class="card">
-    <h2>🌸 スタンプカード <span class="sub">${count}日</span></h2>
+    <h2><span class="label">Activity</span><span class="sub">${active}日稼働</span></h2>
     <div class="month-nav">
       <button data-act="month" data-d="-1" aria-label="前の月">‹</button>
       <b>${y}年${m + 1}月</b>
       <button data-act="month" data-d="1" aria-label="次の月" ${logMonth >= 0 ? 'disabled' : ''}>›</button>
     </div>
-    <div class="stamps">${cells}</div>
-    <div class="legend"><span>🌸 やった日</span><span>💮 ぜんぶやった日</span><span>🎫 チケットで守った日</span></div>
+    <div class="grid">${cells}</div>
+    <div class="legend">少 <i style="background:#0f3b2b"></i><i style="background:#17693f"></i><i style="background:#23a35c"></i><i style="background:#3ddc84"></i> 多
+      <span><i style="box-shadow:inset 0 0 0 2px var(--gold);background:var(--card2)"></i> パーフェクト</span><span>🛡️ シールド</span></div>
   </section>`;
 }
 
@@ -505,45 +635,52 @@ function renderLog() {
   const k = todayKey();
   const j = S.journal[k] || {};
   const mood = draftMood ?? j.mood ?? null;
-  const MOODS = ['😫', '😕', '😐', '🙂', '😄'];
+  const MOODS = ['😫', '😕', '😐', '🙂', '😤'];
   const entries = Object.entries(S.journal).filter(([d]) => d !== k).sort((a, b) => (a[0] < b[0] ? 1 : -1)).slice(0, 14);
-  const owned = STICKERS.filter(([e]) => S.stickers[e]).length;
   const hs = activeHabits();
+  const unlocked = ACHIEVEMENTS.filter(([id]) => S.awarded[`a:${id}`]).length;
 
   return `
-  ${weeklyCard()}
-  ${stampCard()}
+  ${vsCard()}
+  ${statsCard()}
+  ${gridCard()}
 
   ${hs.length ? `<section class="card">
-    <h2>🔁 習慣ごと</h2>
+    <h2><span class="label">Habits</span><span class="sub">直近30日の達成率</span></h2>
     ${hs.map((h) => {
       const n = totalOf(h);
+      let sched = 0, done = 0;
+      for (let i = 1; i <= 30; i++) {
+        const d = addDays(new Date(), -i), dk = dkey(d);
+        if (dk < h.createdAt) break;
+        if (isSched(h, d)) { sched++; if (logOf(h, dk)) done++; }
+      }
+      const rate = sched ? Math.round((done / sched) * 100) : null;
       return `<div class="hstat">
-        <div class="top">${esc(h.emoji)} ${esc(h.name)} <span>${n}回</span></div>
-        <div class="bar"><i style="width:${Math.min(100, (n / AUTOMATIC) * 100)}%"></i></div>
-        <div class="small muted" style="margin-top:4px">${n >= AUTOMATIC ? '🧠 もう体になじんでいます！' : `🧠 体になじむまで あと${AUTOMATIC - n}回`}
-          ${h.identity && n ? `・🪪「${esc(h.identity)}」に${n}票` : ''}</div>
+        <div class="top">${esc(h.emoji)} ${esc(h.name)} <span>${rate !== null ? `達成率 ${rate}% ・ ` : ''}通算${n}回</span></div>
+        <div class="bar fire"><i style="width:${Math.min(100, (n / AUTOMATIC) * 100)}%"></i></div>
+        <div class="small muted" style="margin-top:4px">${n >= AUTOMATIC ? '🧠 自動化完了。もう体に刻まれている' : `🧠 自動化まで あと${AUTOMATIC - n}回`}
+          ${h.identity && n ? `・🎯「${esc(h.identity)}」${n}pt` : ''}</div>
       </div>`;
     }).join('')}
   </section>` : ''}
 
   <section class="card">
-    <h2>🎁 シール図鑑 <span class="sub">${owned} / ${STICKERS.length}</span></h2>
-    <div class="small muted" style="margin-bottom:8px">「やった！」のたびに、ときどきシールがもらえます。💮の日は必ず1枚！</div>
-    <div class="stickers">
-      ${STICKERS.map(([e, name, r]) => {
-        const n = S.stickers[e] || 0;
-        return `<div class="sticker r${r} ${n ? '' : 'locked'}"><span class="i">${e}</span>${n ? name : '？？？'}${n > 1 ? `<span class="x">×${n}</span>` : ''}</div>`;
+    <h2><span class="label">Achievements</span><span class="sub">${unlocked} / ${ACHIEVEMENTS.length}</span></h2>
+    <div class="achs">
+      ${ACHIEVEMENTS.map(([id, icon, name, desc, tier]) => {
+        const on = S.awarded[`a:${id}`];
+        return `<div class="ach t${tier} ${on ? '' : 'locked'}"><span class="i">${icon}</span><b>${on ? name : '？？？'}</b><small>${desc}</small></div>`;
       }).join('')}
     </div>
   </section>
 
   <section class="card">
-    <h2>📝 ひとこと日記</h2>
+    <h2><span class="label">Log</span> ひとこと日誌</h2>
     <div class="moods">${MOODS.map((m, i) => `<button data-act="mood" data-i="${i}" class="${mood === i ? 'on' : ''}">${m}</button>`).join('')}</div>
-    <textarea id="journalText" rows="3" placeholder="今日よかったことを1つ書いてみよう">${esc(j.text || '')}</textarea>
-    <div class="row" style="margin-top:10px"><span class="spacer"></span><button class="primary" data-act="savejournal">保存</button></div>
-    ${entries.length ? `<details style="margin-top:12px"><summary class="small">これまでの日記（${entries.length}）</summary>
+    <textarea id="journalText" rows="3" placeholder="今日の勝ちポイントを1つ（例：雨でも走った）">${esc(j.text || '')}</textarea>
+    <div class="row" style="margin-top:10px"><span class="small muted">書くとミッション達成 +10 EXP</span><span class="spacer"></span><button class="primary" data-act="savejournal">保存</button></div>
+    ${entries.length ? `<details style="margin-top:12px"><summary class="small">過去の日誌（${entries.length}）</summary>
       ${entries.map(([dd, e]) => `<div class="entry"><div class="d">${dd}（${WD[parseKey(dd).getDay()]}）${e.mood != null ? MOODS[e.mood] : ''}</div>${e.text ? `<p>${esc(e.text)}</p>` : ''}</div>`).join('')}
     </details>` : ''}
   </section>`;
@@ -551,17 +688,19 @@ function renderLog() {
 
 /* ---------- render: settings ---------- */
 const PSY = [
-  ['🐣 小さく始める（タイニー・ハビット）', 'やる気に頼らず、ハードルを極限まで下げると行動が起きやすくなります（BJ・フォッグ）。「しんどい日はちょっとだけ版」でも1回にカウントします。'],
-  ['🕖 「いつやる？」を決める（If-Thenプランニング）', '「〜したら、〜する」と決めておくと実行率が大きく上がることが、多くの研究で示されています（ゴルヴィツァー）。'],
-  ['⭕ 今日のリング（閉じたくなる輪）', '人は「あと少しで完成するもの」を完成させたくなります（目標勾配効果・ツァイガルニク効果）。「あと1つで満タン！」と知らせます。'],
-  ['🌱 育つ植物と「のどかわいた」', '成長が目に見えると続けたくなります（進捗の法則・アマビール）。まだの日は植物が少ししょんぼり。でも枯れることはなく、責めずにやさしく背中を押します。'],
-  ['🎫 お休みチケット', '連続記録が1回途切れると「もういいや」とやめてしまいがち（What-the-hell効果）。7日続けるともらえるチケットが、休んだ日の記録を守ります。'],
-  ['🎁 ときどきもらえるシール', 'ごほうびが「いつ出るかわからない」ほど行動は続きやすくなります（変動報酬・スキナー）。'],
-  ['🌸 スタンプカード', '空欄を作りたくない気持ちと、積み重ねが一目でわかる満足感で、毎日を続けやすくします。'],
-  ['📮 先週のあなた', '週のはじめは「新しい自分」を始めやすいタイミング（フレッシュスタート効果）。比べる相手は他人ではなく、過去の自分だけです。'],
-  ['🎉 最初の1回をその場で', '習慣を作ったらすぐ「今日の分」をやってもらうことで、最初の成功体験を作ります。'],
-  ['🧠 66回で体になじむ', '新しい行動が自動化するまで平均66日（個人差あり）と言われています（ラリー他）。'],
-  ['🪪 なりたい自分への1票', 'やるたびに「なりたい自分」へ1票。自己イメージが行動を支えます（ジェームズ・クリア）。「くわしく設定」で使えます。'],
+  ['⚡ EXP・レベル・ランク（有能感）', '成長が数字で見えると「自分はできる」という感覚（有能感）が高まり、内発的動機づけが強まります（自己決定理論・デシ＆ライアン）。'],
+  ['🎯 デイリーミッション（目標設定理論）', '「なんとなく頑張る」より、具体的で達成可能な目標があるほうが成果が出ます（ロック＆レイサム）。毎日3つの明確なミッションを用意しています。'],
+  ['🥊 VS 先週の自分（社会的比較→時間的比較）', '競争は強い動機になりますが、他人と比べると落ち込みやすい。比べる相手を「過去の自分」にすると、勝ち負けの熱さを保ったまま自己効力感が上がります。'],
+  ['🏆 自己ベスト（記録更新）', 'スポーツのPB（パーソナルベスト）と同じく、自分の記録を塗り替える体験は強い達成感を生みます。'],
+  ['💥 クリティカル（変動報酬）', 'ごほうびが「いつ出るかわからない」ほど行動は強化されます（スキナー）。15%の確率でEXPが2倍になります。'],
+  ['🏅 実績（コレクション・ゴールの見える化）', 'ロックされた実績は「次に取りにいく目標」になります（目標勾配効果）。'],
+  ['⭕ 今日のクリア率（ツァイガルニク効果）', '人は未完了のものを完了させたくなります。%表示とリングで「あと少し」を可視化しています。'],
+  ['🛡️ シールド（What-the-hell 効果の防止）', '連続記録が1回途切れると「もういいや」とやめてしまいがち。7日連続ごとのシールドが、休んだ日を守ります。'],
+  ['🔥 連続記録（損失回避）', '人は得るより失うことを強く嫌います（カーネマン＆トヴェルスキー）。積み上げた🔥を守りたい気持ちが、行動の背中を押します。'],
+  ['⚡ 最低ライン（タイニー・ハビット）', 'やる気に頼らず、ハードルを下げて「ゼロの日」をなくすのが継続の鍵です（BJ・フォッグ）。'],
+  ['🕖 いつやる？（If-Thenプランニング）', '「〜したら、〜する」と決めておくと実行率が大きく上がります（ゴルヴィツァー）。'],
+  ['🎯 目指す姿（アイデンティティ）', 'クリアのたびに「なりたい自分」へポイントが積み上がる。自己イメージが行動を支えます（ジェームズ・クリア）。'],
+  ['🧠 66回で自動化', '新しい行動が自動化するまで平均66日（個人差あり）と言われています（ラリー他）。'],
 ];
 
 function renderSettings() {
@@ -648,24 +787,21 @@ document.addEventListener('click', (e) => {
     case 'deltodo': deleteTodo(id); break;
     case 'gotolog': tab = 'log'; render(); window.scrollTo({ top: 0 }); break;
     case 'ticketinfo':
-      celebrate('🎫', `お休みチケット：${S.tickets}枚`, '🔥を7日続けるごとに1枚もらえます（最大3枚）。<br>うっかり休んだ日に自動で使われて、連続記録を守ってくれます。');
+      celebrate('🛡️', `シールド：${S.tickets}枚`, '🔥を7日連続するごとに1枚獲得（最大3枚）。<br>サボってしまった日に自動で発動し、連続記録を守る。');
       break;
     case 'settings': $('#settingsBody').innerHTML = renderSettings(); $('#settingsDialog').showModal(); break;
     case 'closesettings': $('#settingsDialog').close(); break;
-    // onboarding
     case 'onb-tpl': { const t = TEMPLATES[Number(b.dataset.i)]; onb = { step: 2, ...t }; render(); break; }
     case 'onb-cue': finishOnbHabit(b.dataset.v); break;
     case 'onb-back': onb = { step: 1 }; render(); break;
     case 'onb-skip': S.settings.skipOnb = true; onb = null; save(); render(); break;
     case 'onb-cancel': onb = null; render(); break;
     case 'onb-done': { const hid = onb.habitId; onb = null; toggleHabit(hid); break; }
-    case 'onb-later': onb = null; render(); toast('🌱 準備OK！ ○をタップすると記録できます'); break;
-    // log
+    case 'onb-later': onb = null; render(); toast('準備完了。□をタップでクリアできる'); break;
     case 'month': logMonth = Math.min(0, logMonth + Number(b.dataset.d)); render(); break;
     case 'mood': { draftMood = Number(b.dataset.i); const txt = $('#journalText').value; render(); $('#journalText').value = txt; break; }
     case 'savejournal': saveJournal(); break;
-    // settings
-    case 'restore': { const h = S.habits.find((x) => x.id === id); if (h) { h.archived = false; save(); render(); toast(`${esc(h.emoji)} 再開しました`); } break; }
+    case 'restore': { const h = S.habits.find((x) => x.id === id); if (h) { h.archived = false; save(); render(); toast(`${esc(h.emoji)} 再開した`); } break; }
     case 'notifyon': enableNotify(); break;
     case 'notifyoff': S.settings.notify = false; save(); render(); toast('🔕 通知をオフにしました'); break;
     case 'testnotify': testNotify(); break;
@@ -689,12 +825,12 @@ document.addEventListener('submit', (e) => {
   else if (id === 'onbCustom') {
     e.preventDefault();
     const name = e.target.elements.namedItem('t').value.trim();
-    if (!name) { toast('続けたいことを書いてね'); return; }
-    onb = { step: 2, emoji: '✅', name, cue: '', tiny: '', identity: '' }; render();
+    if (!name) { toast('鍛えたいことを書こう'); return; }
+    onb = { step: 2, emoji: '🔥', name, cue: '', tiny: '', identity: '' }; render();
   } else if (id === 'onbCueForm') {
     e.preventDefault();
     const cue = e.target.elements.namedItem('t').value.trim();
-    if (!cue) { toast('いつやるか書いてね'); return; }
+    if (!cue) { toast('いつやるか書こう'); return; }
     finishOnbHabit(cue);
   }
 });
@@ -702,7 +838,7 @@ document.addEventListener('submit', (e) => {
 document.addEventListener('change', (e) => {
   if (e.target.id === 'journalAt') {
     S.settings.journalAt = e.target.value; save();
-    toast(e.target.value ? `📝 ${e.target.value} にお知らせします` : 'ふりかえり通知をオフにしました');
+    toast(e.target.value ? `📝 ${e.target.value} に通知します` : 'ふりかえり通知をオフにしました');
     return;
   }
   if (e.target.id !== 'importFile') return;
@@ -725,10 +861,11 @@ function saveJournal() {
   const text = $('#journalText').value.trim();
   const prev = S.journal[k] || {};
   const mood = draftMood ?? prev.mood ?? null;
-  if (!text && mood == null) { toast('気分かひとことを入れてみよう'); return; }
+  if (!text && mood == null) { toast('気分かひとことを入れよう'); return; }
   S.journal[k] = { mood, text };
-  toast(prev.text || prev.mood != null ? '保存しました' : '📝 書けたね！おつかれさま');
+  toast('📝 記録した');
   draftMood = null;
+  checkMissions(); checkAchievements(false);
   save(); render();
 }
 
@@ -765,9 +902,9 @@ function nextCeleb() {
   c.showModal();
 }
 $('#celebrate').addEventListener('close', () => setTimeout(nextCeleb, 250));
-function popPlant() {
+function popRing() {
   requestAnimationFrame(() => {
-    const p = $('#plant');
+    const p = $('#ring');
     if (p) { p.classList.remove('pop'); void p.offsetWidth; p.classList.add('pop'); }
   });
 }
@@ -775,18 +912,17 @@ function popPlant() {
 const cv = $('#confetti');
 const cx = cv.getContext('2d');
 let parts = [], animating = false;
-const COLORS = ['#5b8def', '#34b27b', '#f0a23b', '#e5534b', '#a974ff', '#ffd23f'];
+const COLORS = ['#ff7a1a', '#f5c542', '#22d3ee', '#3ddc84', '#ffffff'];
 function confetti(n = 40) {
   if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
   const dpr = window.devicePixelRatio || 1;
   cv.width = innerWidth * dpr; cv.height = innerHeight * dpr;
   cx.setTransform(dpr, 0, 0, dpr, 0, 0);
   for (let i = 0; i < n; i++) {
+    const a = Math.random() * Math.PI * 2, v = Math.random() * 11 + 3;
     parts.push({
-      x: innerWidth / 2 + (Math.random() - 0.5) * 120, y: innerHeight * 0.45,
-      vx: (Math.random() - 0.5) * 12, vy: -Math.random() * 12 - 4,
-      s: Math.random() * 6 + 4, r: Math.random() * 6, vr: (Math.random() - 0.5) * 0.3,
-      c: pick(COLORS), life: 90 + Math.random() * 40,
+      x: innerWidth / 2, y: innerHeight * 0.4, vx: Math.cos(a) * v, vy: Math.sin(a) * v - 3,
+      s: Math.random() * 3 + 2, c: pick(COLORS), life: 50 + Math.random() * 40,
     });
   }
   if (!animating) { animating = true; requestAnimationFrame(tick); }
@@ -795,12 +931,12 @@ function tick() {
   cx.clearRect(0, 0, innerWidth, innerHeight);
   parts = parts.filter((p) => p.life > 0);
   for (const p of parts) {
-    p.vy += 0.35; p.vx *= 0.99; p.x += p.vx; p.y += p.vy; p.r += p.vr; p.life--;
-    cx.save(); cx.translate(p.x, p.y); cx.rotate(p.r);
-    cx.globalAlpha = Math.min(1, p.life / 30);
-    cx.fillStyle = p.c; cx.fillRect(-p.s / 2, -p.s / 4, p.s, p.s / 2);
-    cx.restore();
+    p.vy += 0.22; p.vx *= 0.97; p.vy *= 0.97; p.x += p.vx; p.y += p.vy; p.life--;
+    cx.globalAlpha = Math.min(1, p.life / 25);
+    cx.strokeStyle = p.c; cx.lineWidth = p.s; cx.lineCap = 'round';
+    cx.beginPath(); cx.moveTo(p.x, p.y); cx.lineTo(p.x - p.vx * 2, p.y - p.vy * 2); cx.stroke();
   }
+  cx.globalAlpha = 1;
   if (parts.length) requestAnimationFrame(tick);
   else { animating = false; cx.clearRect(0, 0, innerWidth, innerHeight); }
 }
@@ -814,7 +950,6 @@ const isStandalone = () => window.matchMedia('(display-mode: standalone)').match
 const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
 let swReg = null, installEvt = null, syncTimer = null;
 
-// Service Worker が読む「今日のリマインダー情報」
 function reminderConfig() {
   const k = todayKey(), d = new Date();
   const hs = activeHabits();
@@ -862,10 +997,10 @@ async function enableNotify() {
 }
 async function testNotify() {
   if (!canNotify || Notification.permission !== 'granted') { toast('先に通知をオンにしてください'); return; }
-  const opts = { body: '🕖 こんなふうに、決めた時刻にお知らせします。\n🐣 ちょっとだけでもOK！', icon: 'icons/icon-192.png', badge: 'icons/badge-96.png', tag: 'test' };
+  const opts = { body: '🕖 決めた時刻に、まだなら通知する。\n⚡ 最低ラインだけでもクリア扱い。', icon: 'icons/icon-192.png', badge: 'icons/badge-96.png', tag: 'test' };
   try {
-    if (swReg) await swReg.showNotification('🌱 つづく：テスト通知', opts);
-    else new Notification('🌱 つづく：テスト通知', opts);
+    if (swReg) await swReg.showNotification('つづく. テスト通知', opts);
+    else new Notification('つづく. テスト通知', opts);
     toast('テスト通知を送りました');
   } catch (e) { toast('通知を表示できませんでした'); }
 }
@@ -890,7 +1025,7 @@ function notifySection() {
         : `<button class="primary" data-act="notifyon" ${disabled ? 'disabled' : ''}>オンにする</button>`}
     </div>
     <div class="setting">
-      <div><b>📝 ふりかえりの時刻</b><div class="small muted">今日のようすをお知らせ</div></div>
+      <div><b>📝 ふりかえりの時刻</b><div class="small muted">今日の戦績を通知</div></div>
       <input type="time" id="journalAt" value="${esc(S.settings.journalAt || '')}">
     </div>
     <div class="small muted">⏰ 習慣ごとの時刻は、習慣の名前をタップ →「くわしく設定」で決められます。</div>
@@ -907,7 +1042,6 @@ function installSection() {
         : 'ブラウザのメニューから「アプリをインストール」/「ホーム画面に追加」を選ぶとアプリとして使えます';
 }
 
-// 端末のカレンダーに「繰り返しリマインダー」として登録できる .ics
 function exportICS() {
   const hs = activeHabits().filter((h) => h.remindAt);
   if (!hs.length && !S.settings.journalAt) { toast('習慣の「くわしく設定」で時刻を決めてください'); return; }
@@ -924,9 +1058,9 @@ function exportICS() {
     'END:VEVENT',
   ].join('\r\n');
   const events = hs.map((h) => ev(h.id, h.remindAt, h.days, `${h.emoji} ${h.name}`,
-    `${h.cue ? `🕖 ${h.cue}\n` : ''}🐣 しんどい日は「${h.tiny || '2分だけ'}」でOK\n✅ 終わったら「つづく」でタップ！`));
-  if (S.settings.journalAt) events.push(ev('journal', S.settings.journalAt, [0, 1, 2, 3, 4, 5, 6], '📝 つづく：今日のふりかえり', '今日よかったことを1つ書こう'));
-  const ics = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//tsuzuku//habit//JA', 'CALSCALE:GREGORIAN', 'X-WR-CALNAME:つづく 習慣リマインダー', ...events, 'END:VCALENDAR'].join('\r\n');
+    `${h.cue ? `🕖 ${h.cue}\n` : ''}⚡ 最低ライン：${h.tiny || '2分だけ'}\n✔ 終わったら「つづく.」でクリア！`));
+  if (S.settings.journalAt) events.push(ev('journal', S.settings.journalAt, [0, 1, 2, 3, 4, 5, 6], '📝 つづく. 今日の戦績チェック', '今日の勝ちポイントを1つ記録しよう'));
+  const ics = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//tsuzuku//habit//JA', 'CALSCALE:GREGORIAN', 'X-WR-CALNAME:つづく. 習慣リマインダー', ...events, 'END:VCALENDAR'].join('\r\n');
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([ics], { type: 'text/calendar' }));
   a.download = 'tsuzuku-reminders.ics';
@@ -935,7 +1069,6 @@ function exportICS() {
   toast('📅 書き出しました。ファイルを開くとカレンダーに追加できます');
 }
 
-// 通知のボタンやショートカットから開かれたとき
 function handleParams(qs) {
   const p = new URLSearchParams(qs);
   if (p.get('act') === 'habit') {
@@ -966,14 +1099,15 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
 
 /* ---------- boot ---------- */
 if (S.lastOpen && diffDays(S.lastOpen, todayKey()) >= 3) S.welcomeBack = todayKey();
-processTickets();
+processShields();
+S.bestStreak = Math.max(S.bestStreak || 0, computeBest());
+checkAchievements(true); // 既存の記録で達成済みの実績は静かに解除
 render();
 if (location.search) { handleParams(location.search); history.replaceState(null, '', location.pathname); }
 S.lastOpen = todayKey();
 save();
 
-// 日付が変わったら自動で更新
 let lastDay = todayKey();
 setInterval(() => {
-  if (todayKey() !== lastDay) { lastDay = todayKey(); processTickets(); S.lastOpen = lastDay; save(); render(); }
+  if (todayKey() !== lastDay) { lastDay = todayKey(); processShields(); S.lastOpen = lastDay; save(); render(); }
 }, 60000);

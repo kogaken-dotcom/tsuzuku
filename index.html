@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#5b8def">
+  <meta name="theme-color" content="#0d1015">
   <title>つづく — 習慣とTODO</title>
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" type="image/png" href="icons/icon-192.png">
@@ -11,14 +11,14 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="つづく">
-  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
   <header class="topbar">
-    <div class="brand">🌱 つづく</div>
+    <div class="brand">つづく<span>.</span></div>
     <div class="top-right">
-      <button class="ticket" id="ticketBadge" data-act="ticketinfo" title="お休みチケット"></button>
+      <button class="ticket" id="ticketBadge" data-act="ticketinfo" title="シールド"></button>
       <button class="iconbtn" data-act="settings" aria-label="設定">⚙️</button>
     </div>
   </header>
@@ -26,8 +26,8 @@
   <main id="view"></main>
 
   <nav class="tabbar" id="tabbar">
-    <button data-tab="today" class="active"><span>☀️</span>今日</button>
-    <button data-tab="log"><span>🌸</span>きろく</button>
+    <button data-tab="today" class="active"><span>⚡</span>今日</button>
+    <button data-tab="log"><span>📊</span>データ</button>
   </nav>
 
   <dialog id="habitDialog">
@@ -42,9 +42,9 @@
         <input name="cue" placeholder="例：寝る前、朝ごはんのあと">
         <small>毎日やっていることのあとにくっつけると忘れにくくなります</small>
       </label>
-      <label>🐣 しんどい日の「ちょっとだけ版」
+      <label>⚡ 最低ライン（しんどい日はこれだけ）
         <input name="tiny" placeholder="例：1ページだけ読む">
-        <small>これだけやっても1回にカウントされます</small>
+        <small>これだけでも1回クリア。ゼロの日をなくすのが最強の戦略</small>
       </label>
       <details class="more">
         <summary>くわしく設定</summary>
@@ -56,9 +56,9 @@
           <legend>やる曜日</legend>
           <div id="dayPicker"></div>
         </fieldset>
-        <label>🪪 なりたい自分
+        <label>🎯 目指す姿
           <input name="identity" placeholder="例：読書家">
-          <small>やるたびに「なりたい自分」へ1票ずつ入ります</small>
+          <small>クリアするたびに、目指す姿へ1ポイント積み上がります</small>
         </label>
         <label>🎁 やったあとのごほうび
           <input name="reward" placeholder="例：好きなお茶をいれる">
@@ -82,7 +82,7 @@
     <div class="big" id="celebrateIcon">🎉</div>
     <h2 id="celebrateTitle"></h2>
     <p id="celebrateText"></p>
-    <form method="dialog"><button class="primary">やったね！</button></form>
+    <form method="dialog"><button class="primary">OK</button></form>
   </dialog>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>

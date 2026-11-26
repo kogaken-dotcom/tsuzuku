@@ -4,7 +4,7 @@
  *  - リマインダー通知（アプリからの合図 / Periodic Background Sync）
  *  - 通知のボタンから「やった！」「2分だけ」を記録
  * ========================================================= */
-const VERSION = 'tsuzuku-shell-v2';
+const VERSION = 'tsuzuku-shell-v3';
 const DATA = 'tsuzuku-data';
 const SHELL = [
   './', './index.html', './styles.css', './app.js', './manifest.webmanifest',
@@ -73,15 +73,15 @@ async function checkReminders() {
     sent.tags.push(tag);
     const lines = [];
     if (h.cue) lines.push(`📍 ${h.cue} → ${h.name}`);
-    lines.push(`🐣 しんどい日は「${h.tiny || '2分だけ'}」でOK`);
-    if (fresh && h.risk) lines.push(`🔥 ${h.streak}日連続中！今日もつなごう`);
-    jobs.push(self.registration.showNotification(`${h.emoji} ${h.name}の時間です`, {
+    lines.push(`⚡ 最低ライン「${h.tiny || '2分だけ'}」でもクリア`);
+    if (fresh && h.risk) lines.push(`🔥 ${h.streak}日連続がかかっている。今日もつなげ`);
+    jobs.push(self.registration.showNotification(`${h.emoji} ${h.name}の時間だ`, {
       body: lines.join('\n'),
       tag,
       icon: scoped('./icons/icon-192.png'),
       badge: scoped('./icons/badge-96.png'),
       data: { habitId: h.id },
-      actions: [{ action: 'full', title: '✅ やった！' }, { action: 'tiny', title: '🐣 ちょっとだけ' }],
+      actions: [{ action: 'full', title: '✔ クリア' }, { action: 'tiny', title: '⚡ 最低ライン' }],
     }));
   }
 
@@ -90,9 +90,9 @@ async function checkReminders() {
     if (!sent.tags.includes(tag)) {
       sent.tags.push(tag);
       const body = fresh
-        ? `今日の小さな勝利は${cfg.winsToday}個。${cfg.undone ? `まだ${cfg.undone}つの習慣が待っています。2分だけでも！` : 'よく頑張りました！'}\nよかったことを1行だけ書いてみよう。`
-        : '今日はどんな1日でしたか？よかったことを1行だけ書いてみよう。';
-      jobs.push(self.registration.showNotification('📝 今日のふりかえり', {
+        ? `今日のクリア：${cfg.winsToday}。${cfg.undone ? `残り${cfg.undone}つ。最低ラインだけでも取りにいけ。` : 'パーフェクト。いい1日だった。'}\n日誌を書くと +10 EXP。`
+        : '今日はどんな1日でしたか？日誌を書くと +10 EXP。';
+      jobs.push(self.registration.showNotification('📊 今日の戦績', {
         body, tag, icon: scoped('./icons/icon-192.png'), badge: scoped('./icons/badge-96.png'), data: { tab: 'reflect' },
       }));
     }
