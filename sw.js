@@ -4,7 +4,7 @@
  *  - リマインダー通知（アプリからの合図 / Periodic Background Sync）
  *  - 通知のボタンから「やった！」「2分だけ」を記録
  * ========================================================= */
-const VERSION = 'tsuzuku-shell-v1';
+const VERSION = 'tsuzuku-shell-v2';
 const DATA = 'tsuzuku-data';
 const SHELL = [
   './', './index.html', './styles.css', './app.js', './manifest.webmanifest',
@@ -73,15 +73,15 @@ async function checkReminders() {
     sent.tags.push(tag);
     const lines = [];
     if (h.cue) lines.push(`📍 ${h.cue} → ${h.name}`);
-    lines.push(`🐣 気が乗らなければ「${h.tiny || '2分だけ'}」でもOK`);
-    if (fresh && h.risk) lines.push(`🔥 ${h.streak}回の連続記録、今日やればキープ！`);
+    lines.push(`🐣 しんどい日は「${h.tiny || '2分だけ'}」でOK`);
+    if (fresh && h.risk) lines.push(`🔥 ${h.streak}日連続中！今日もつなごう`);
     jobs.push(self.registration.showNotification(`${h.emoji} ${h.name}の時間です`, {
       body: lines.join('\n'),
       tag,
       icon: scoped('./icons/icon-192.png'),
       badge: scoped('./icons/badge-96.png'),
       data: { habitId: h.id },
-      actions: [{ action: 'full', title: '✅ やった！' }, { action: 'tiny', title: '🐣 2分だけ' }],
+      actions: [{ action: 'full', title: '✅ やった！' }, { action: 'tiny', title: '🐣 ちょっとだけ' }],
     }));
   }
 

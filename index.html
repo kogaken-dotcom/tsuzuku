@@ -17,56 +17,65 @@
 <body>
   <header class="topbar">
     <div class="brand">🌱 つづく</div>
-    <div class="lvbox" id="lvbox"></div>
+    <div class="top-right">
+      <button class="ticket" id="ticketBadge" data-act="ticketinfo" title="お休みチケット"></button>
+      <button class="iconbtn" data-act="settings" aria-label="設定">⚙️</button>
+    </div>
   </header>
 
   <main id="view"></main>
 
   <nav class="tabbar" id="tabbar">
     <button data-tab="today" class="active"><span>☀️</span>今日</button>
-    <button data-tab="habits"><span>🔁</span>習慣</button>
-    <button data-tab="growth"><span>📈</span>成長</button>
-    <button data-tab="reflect"><span>📝</span>ふりかえり</button>
+    <button data-tab="log"><span>🌸</span>きろく</button>
   </nav>
 
   <dialog id="habitDialog">
     <form method="dialog" id="habitForm">
-      <h2 id="habitDialogTitle">新しい習慣</h2>
+      <h2>習慣を編集</h2>
       <input type="hidden" name="id">
       <div class="row">
-        <label class="emoji-field">絵文字<input name="emoji" maxlength="4" value="📚"></label>
-        <label class="grow">習慣の名前<input name="name" required placeholder="例：本を読む"></label>
+        <label class="emoji-field">絵文字<input name="emoji" maxlength="4"></label>
+        <label class="grow">なにをする？<input name="name" required></label>
       </div>
-      <label>🪪 どんな人になりたい？（アイデンティティ）
-        <input name="identity" placeholder="例：読書家">
-        <small>「〇〇な人」になるための1票として記録されます</small>
+      <label>🕖 いつやる？
+        <input name="cue" placeholder="例：寝る前、朝ごはんのあと">
+        <small>毎日やっていることのあとにくっつけると忘れにくくなります</small>
       </label>
-      <label>📍 きっかけ（〜したら / 〜のあとに）
-        <input name="cue" placeholder="例：朝コーヒーを淹れたら">
-        <small>If-Thenプランニング：実行率が大きく上がると言われています</small>
-      </label>
-      <label>🐣 2分だけバージョン（やる気ゼロの日用）
+      <label>🐣 しんどい日の「ちょっとだけ版」
         <input name="tiny" placeholder="例：1ページだけ読む">
-        <small>ハードルを極限まで下げた版。これでも記録はつながります</small>
+        <small>これだけやっても1回にカウントされます</small>
       </label>
-      <label>⏰ リマインダー時刻（任意）
-        <input type="time" name="remindAt" style="width:auto">
-        <small>未完了ならこの時刻に通知します（「習慣」タブで通知をオンにしてください）</small>
-      </label>
-      <label>🎁 やった後のごほうび（任意）
-        <input name="reward" placeholder="例：好きなお菓子をひとつ">
-      </label>
-      <fieldset class="days">
-        <legend>実行する曜日</legend>
-        <div id="dayPicker"></div>
-      </fieldset>
+      <details class="more">
+        <summary>くわしく設定</summary>
+        <label>⏰ 通知する時刻
+          <input type="time" name="remindAt" style="width:auto">
+          <small>まだやっていないときだけ、この時刻にお知らせします（⚙️で通知をオンに）</small>
+        </label>
+        <fieldset class="days">
+          <legend>やる曜日</legend>
+          <div id="dayPicker"></div>
+        </fieldset>
+        <label>🪪 なりたい自分
+          <input name="identity" placeholder="例：読書家">
+          <small>やるたびに「なりたい自分」へ1票ずつ入ります</small>
+        </label>
+        <label>🎁 やったあとのごほうび
+          <input name="reward" placeholder="例：好きなお茶をいれる">
+        </label>
+      </details>
       <div class="dialog-actions">
-        <button type="button" class="ghost danger" id="archiveHabit" hidden>アーカイブ</button>
+        <button type="button" class="ghost danger" id="archiveHabit">やめる</button>
         <span class="spacer"></span>
         <button type="button" class="ghost" id="cancelHabit">キャンセル</button>
         <button type="submit" class="primary">保存</button>
       </div>
     </form>
+  </dialog>
+
+  <dialog id="settingsDialog" class="sheet">
+    <div class="sheet-head"><h2>⚙️ 設定</h2><button class="ghost" data-act="closesettings">閉じる</button></div>
+    <div id="settingsBody"></div>
   </dialog>
 
   <dialog id="celebrate" class="celebrate">
