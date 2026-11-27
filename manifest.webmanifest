@@ -16,6 +16,6 @@
   ],
   "shortcuts": [
     { "name": "今日", "url": "./?tab=today", "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }] },
-    { "name": "データ", "url": "./?tab=log", "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }] }
+    { "name": "成長", "url": "./?tab=log", "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }] }
   ]
 }
