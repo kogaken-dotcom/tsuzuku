@@ -38,6 +38,8 @@ function defaultState() {
     logs: {},       // { 'YYYY-MM-DD': { habitId: { type } } }
     todos: [],      // { id, text, frog, done, doneAt, createdAt }
     journal: {},    // { 'YYYY-MM-DD': { mood, text } }
+    routines: [],   // { id, color, emoji, name, time, steps:[{id,text}], days, createdAt, archived }
+    rlogs: {},      // { 'YYYY-MM-DD': { routineId: { checked:[stepId], done } } }
     awarded: {},
     bestStreak: 0,
     tickets: 0,     // シールド枚数
@@ -91,14 +93,169 @@ const isSched = (h, d) => h.days.includes(d.getDay()) && dkey(d) >= h.createdAt;
 const logOf = (h, k) => (S.logs[k] && S.logs[k][h.id]) || null;
 const totalOf = (h) => Object.values(S.logs).filter((l) => l[h.id]).length;
 
+const routinesDoneOn = (k) => (S.rlogs[k] ? Object.values(S.rlogs[k]).filter((x) => x.done).length : 0);
 function winsOn(k) {
   const habits = S.logs[k] ? Object.keys(S.logs[k]).length : 0;
-  return habits + S.todos.filter((t) => t.done && t.doneAt === k).length;
+  return habits + routinesDoneOn(k) + S.todos.filter((t) => t.done && t.doneAt === k).length;
 }
 function totalWins() {
   let n = 0;
   for (const k in S.logs) n += Object.keys(S.logs[k]).length;
+  for (const k in S.rlogs) n += routinesDoneOn(k);
   return n + S.todos.filter((t) => t.done).length;
+}
+
+/* ---------- routines（毎日のルーティーン） ---------- */
+const ROUTINE_TEMPLATES = [
+  { emoji: '🌅', name: '朝のルーティーン', time: '07:00', steps: ['カーテンを開けて日光を浴びる', 'コップ1杯の水を飲む', 'ストレッチ3分', '今日やることを3つ決める'] },
+  { emoji: '🌙', name: '夜のルーティーン', time: '22:30', steps: ['明日の服とカバンを準備', 'スマホを充電器へ（寝室の外）', 'ひとこと日誌を書く', '23時に布団に入る'] },
+  { emoji: '💼', name: '仕事はじめ', time: '09:00', steps: ['デスクを片づける', '今日の最重要タスクを決める', '通知を切って25分集中'] },
+  { emoji: '🏋️', name: 'トレーニング前', time: '', steps: ['ウェアに着替える', '水を用意する', 'ウォームアップ5分'] },
+];
+const activeRoutines = () => S.routines.filter((r) => !r.archived);
+const rlogOf = (r, k) => (S.rlogs[k] && S.rlogs[k][r.id]) || null;
+const routineDone = (r, k) => !!(rlogOf(r, k) && rlogOf(r, k).done);
+const routineTotal = (r) => Object.values(S.rlogs).filter((l) => l[r.id] && l[r.id].done).length;
+
+function toggleStep(rid, sid) {
+  const r = S.routines.find((x) => x.id === rid);
+  if (!r) return;
+  const k = todayKey();
+  S.rlogs[k] = S.rlogs[k] || {};
+  const log = S.rlogs[k][rid] || { checked: [], done: false };
+  const wasDone = log.done;
+  const first = winsOn(k) === 0;
+  log.checked = log.checked.includes(sid) ? log.checked.filter((x) => x !== sid) : [...log.checked, sid];
+  log.done = r.steps.length > 0 && r.steps.every((s) => log.checked.includes(s.id));
+  S.rlogs[k][rid] = log;
+  if (!log.checked.length) { delete S.rlogs[k][rid]; if (!Object.keys(S.rlogs[k]).length) delete S.rlogs[k]; }
+  if (log.done && !wasDone) {
+    toast(`${esc(r.emoji)} ${esc(r.name)} 完了！`);
+    confetti(90);
+    const n = routineTotal(r);
+    if ([1, 7, 21, 30, 66, 100].includes(n) && !S.awarded[`r:${r.id}:${n}`]) {
+      S.awarded[`r:${r.id}:${n}`] = true;
+      celebrate(n === 1 ? '🎯' : '🔁', `${esc(r.emoji)} ${esc(r.name)}：${n}回完了`,
+        n === 1 ? '最初の1周クリア。手順が決まっていると、迷わず動ける。' : '流れが体に入ってきている。');
+    }
+    afterWin(first);
+  } else if (!log.done && log.checked.includes(sid)) {
+    const left = r.steps.length - log.checked.length;
+    if (left === 1) toast('あと1ステップで完了！');
+  }
+  save(); render();
+}
+
+function routineWeek(r) {
+  const mon = mondayOf(new Date()), tk = todayKey();
+  let out = '', done = 0, sched = 0;
+  for (let i = 0; i < 7; i++) {
+    const d = addDays(mon, i), k = dkey(d);
+    const on = routineDone(r, k), s = isSched(r, d);
+    if (s && k <= tk) sched++;
+    if (on) done++;
+    let cls = 'wc';
+    if (on) cls += ' on';
+    else if (k > tk) cls += ' future';
+    else if (!s) cls += ' rest';
+    else if (k === tk) cls += ' today';
+    else cls += ' miss';
+    out += `<i class="${cls}" title="${md(k)}">${WD_MON[i]}</i>`;
+  }
+  return { html: out, done, sched };
+}
+
+function routineBlock(r) {
+  const k = todayKey();
+  const log = rlogOf(r, k);
+  const checked = log ? log.checked : [];
+  const done = routineDone(r, k);
+  const n = r.steps.filter((s) => checked.includes(s.id)).length;
+  const nextIdx = r.steps.findIndex((s) => !checked.includes(s.id));
+  const wk = routineWeek(r);
+  return `<div class="routine ${done ? 'done' : ''}" style="--hc:${colorOf(r)}">
+    <div class="r-head">
+      <div class="r-emo">${done ? '✔' : esc(r.emoji)}</div>
+      <div class="r-title"><b>${esc(r.name)}</b><span>${r.time ? `${esc(r.time)}〜 ・ ` : ''}今週 ${wk.done}/${wk.sched}</span></div>
+      <div class="r-prog">${n}<small>/${r.steps.length}</small></div>
+      <button class="r-edit" data-act="editroutine" data-id="${r.id}" aria-label="編集">✎</button>
+    </div>
+    <div class="r-bar">${r.steps.map((s) => `<i class="${checked.includes(s.id) ? 'on' : ''}"></i>`).join('')}</div>
+    ${done ? `<div class="r-done">🔁 ${esc(r.name)} 完了！ 通算${routineTotal(r)}回 <button class="linkbtn" data-act="ropen" data-id="${r.id}">ステップを見る</button></div>` : ''}
+    <div class="steps ${done && !openRoutines.has(r.id) ? 'hide' : ''}">
+      ${r.steps.map((s, i) => `<button class="step ${checked.includes(s.id) ? 'on' : ''} ${i === nextIdx ? 'next' : ''}" data-act="step" data-rid="${r.id}" data-sid="${s.id}">
+        <span class="sc">${checked.includes(s.id) ? '✔' : i + 1}</span><span class="st">${esc(s.text)}</span>${i === nextIdx ? '<em>次はこれ</em>' : ''}
+      </button>`).join('')}
+    </div>
+    <div class="wchain">${wk.html}</div>
+  </div>`;
+}
+const openRoutines = new Set();
+
+function routinesCard() {
+  const d = new Date();
+  const rs = activeRoutines().filter((r) => isSched(r, d));
+  const off = activeRoutines().filter((r) => !isSched(r, d));
+  const doneN = rs.filter((r) => routineDone(r, todayKey())).length;
+  return `<section class="card">
+    <h2>🔁 毎日のルーティーン <span class="sub">${rs.length ? `${doneN} / ${rs.length} 完了` : ''}</span></h2>
+    ${rs.length ? rs.map(routineBlock).join('') : `<div class="empty small">朝や夜の「決まった流れ」を登録すると、迷わず動けるようになります</div>`}
+    ${off.length ? `<div class="small muted" style="margin-top:6px">今日はオフ：${off.map((r) => esc(r.emoji + r.name)).join('、')}</div>` : ''}
+    <button class="addbtn" data-act="addroutine">＋ ルーティーンを追加</button>
+  </section>`;
+}
+
+const rdlg = () => $('#routineDialog');
+const rform = () => $('#routineForm');
+const rfe = (n) => rform().elements.namedItem(n);
+let routineTplPicked = false;
+function openRoutine(r, tpl) {
+  const f = rform();
+  f.reset();
+  const src = r || tpl || { emoji: '🔁', name: '', time: '', steps: [] };
+  rfe('id').value = r ? r.id : '';
+  rfe('emoji').value = src.emoji || '🔁';
+  rfe('name').value = src.name || '';
+  rfe('time').value = src.time || '';
+  rfe('steps').value = (src.steps || []).map((s) => (typeof s === 'string' ? s : s.text)).join('\n');
+  const days = r ? r.days : [0, 1, 2, 3, 4, 5, 6];
+  f.querySelectorAll('input[name=rday]').forEach((c) => { c.checked = days.includes(Number(c.value)); });
+  $('#routineTitle').textContent = r ? 'ルーティーンを編集' : '新しいルーティーン';
+  $('#archiveRoutine').hidden = !r;
+  $('#routineTpls').hidden = !!r;
+  rdlg().showModal();
+}
+function saveRoutine() {
+  const lines = rfe('steps').value.split('\n').map((s) => s.trim()).filter(Boolean);
+  const days = [...rform().querySelectorAll('input[name=rday]:checked')].map((c) => Number(c.value));
+  if (!rfe('name').value.trim()) { toast('名前を入れてください'); return false; }
+  if (!lines.length) { toast('ステップを1つ以上書いてください'); return false; }
+  if (!days.length) { toast('曜日を1つ以上選んでください'); return false; }
+  const id = rfe('id').value;
+  const r = id ? S.routines.find((x) => x.id === id) : null;
+  const old = r ? r.steps : [];
+  const used = new Set();
+  const steps = lines.map((text, i) => {
+    // 同じ文言 → 同じステップ。同じ位置の文言を書き換えただけ → 同じステップ扱い
+    let hit = old.find((s) => s.text === text && !used.has(s.id));
+    if (!hit && old[i] && !used.has(old[i].id) && !lines.includes(old[i].text)) hit = old[i];
+    if (hit) used.add(hit.id);
+    return hit ? { id: hit.id, text } : { id: uid(), text };
+  });
+  const data = { emoji: rfe('emoji').value.trim() || '🔁', name: rfe('name').value.trim(), time: rfe('time').value, steps, days };
+  if (r) {
+    Object.assign(r, data);
+    const k = todayKey(), log = rlogOf(r, k);
+    if (log) { // 今日のチェック状態を新しいステップに合わせて再計算
+      log.checked = log.checked.filter((sid) => steps.some((s) => s.id === sid));
+      log.done = steps.every((s) => log.checked.includes(s.id));
+    }
+  } else {
+    S.routines.push({ id: uid(), color: S.nextColor++, createdAt: todayKey(), archived: false, ...data });
+    toast(`${esc(data.emoji)} 「${esc(data.name)}」を作成。上から順にこなそう`);
+  }
+  save(); render();
+  return true;
 }
 function progressOn(d) {
   const k = dkey(d);
@@ -186,11 +343,15 @@ const ACHIEVEMENTS = [
   ['d50', '⚔️', 'タスクスレイヤー', 'やること50件', 2, (c) => c.todos >= 50],
   ['d200', '🐉', 'タスクキング', 'やること200件', 3, (c) => c.todos >= 200],
   ['sh1', '🛡️', '不屈', 'シールドで記録を守った', 1, (c) => c.shields >= 1],
+  ['r1', '🔁', 'ルーティーン', 'ルーティーンを初完了', 1, (c) => c.routines >= 1],
+  ['r30', '⚙️', '仕組み化', 'ルーティーン30回完了', 2, (c) => c.routines >= 30],
+  ['r100', '🏯', '鉄のルーティーン', 'ルーティーン100回完了', 3, (c) => c.routines >= 100],
 ];
 function checkAchievements(silent) {
   const c = {
     total: totalWins(), best: Math.max(S.bestStreak, dayStreak()), perfect: perfectDays(),
     todos: S.todos.filter((t) => t.done).length, shields: Object.keys(S.frozen).length,
+    routines: Object.keys(S.rlogs).reduce((a, k) => a + routinesDoneOn(k), 0),
   };
   for (const [id, icon, name, desc, , test] of ACHIEVEMENTS) {
     if (!S.awarded[`a:${id}`] && test(c)) {
@@ -470,6 +631,7 @@ function renderToday() {
   return `
   ${banners()}
   ${heroCard()}
+  ${routinesCard()}
 
   <section class="card">
     <div class="today-head">
@@ -640,6 +802,28 @@ function habitsCard() {
   </section>`;
 }
 
+function routineStatsCard() {
+  const rs = activeRoutines();
+  if (!rs.length) return '';
+  return `<section class="card">
+    <h2>🔁 ルーティーンの記録 <span class="sub">直近30日の完了率</span></h2>
+    ${rs.map((r) => {
+      let sched = 0, done = 0;
+      for (let i = 1; i <= 30; i++) {
+        const d = addDays(new Date(), -i), dk = dkey(d);
+        if (dk < r.createdAt) break;
+        if (isSched(r, d)) { sched++; if (routineDone(r, dk)) done++; }
+      }
+      const rate = sched ? Math.round((done / sched) * 100) : null;
+      return `<div class="hstat" style="--hc:${colorOf(r)}">
+        <div class="top"><span><i class="sw"></i>${esc(r.emoji)} ${esc(r.name)}</span><span class="rate">${rate !== null ? `${rate}%` : '—'}</span></div>
+        <div class="hbar"><i style="width:${rate ?? 0}%"></i></div>
+        <div class="small muted" style="margin-top:6px">通算 <b>${routineTotal(r)}</b>回完了 ・ ${r.steps.length}ステップ</div>
+      </div>`;
+    }).join('')}
+  </section>`;
+}
+
 function renderLog() {
   const k = todayKey();
   const j = S.journal[k] || {};
@@ -662,6 +846,7 @@ function renderLog() {
   ${weeklyChart()}
   ${calendarCard()}
   ${habitsCard()}
+  ${routineStatsCard()}
 
   <section class="card">
     <h2>🏅 実績 <span class="sub">${unlocked} / ${ACHIEVEMENTS.length}</span></h2>
@@ -726,6 +911,7 @@ const PSY = [
   ['🏆 自己ベストまであと◯日（目標勾配効果）', 'ゴールが近づくほど人は加速します。自己ベストまでの距離を常に表示しています。'],
   ['⭕ 今日の進捗バー（ツァイガルニク効果）', '人は未完了のものを完了させたくなります。「残り1つでパーフェクト」で最後のひと押しを。'],
   ['🛡️ シールド（What-the-hell 効果の防止）', '1回途切れると「もういいや」とやめてしまいがち。7日連続ごとのシールドが休んだ日を守ります。'],
+  ['🔁 ルーティーン（ハビット・スタッキング）', '「Aが終わったらB」と行動を鎖のようにつなげると、1つ目を始めるだけで残りが自然に続きます（ジェームズ・クリア）。決まった手順は「何をするか考える」負担（決断疲れ）も減らします。'],
   ['⚡ 最低ライン（タイニー・ハビット）', 'ハードルを下げて「ゼロの日」をなくすのが継続の鍵です（BJ・フォッグ）。'],
   ['🕖 いつやる？（If-Thenプランニング）', '「〜したら、〜する」と決めておくと実行率が大きく上がります（ゴルヴィツァー）。'],
   ['🏅 実績・マイルストーン（目標設定）', '7・21・30・66・100回…と次の目標が常に見えることで、次の一歩が具体的になります（ロック＆レイサム）。'],
@@ -735,8 +921,11 @@ const PSY = [
 
 function renderSettings() {
   const archived = S.habits.filter((h) => h.archived);
+  const archivedR = S.routines.filter((r) => r.archived);
   return `
   <div class="sec">${notifySection()}</div>
+  ${archivedR.length ? `<div class="sec"><h3>🗄️ やめたルーティーン</h3>
+    ${archivedR.map((r) => `<div class="setting"><span>${esc(r.emoji)} ${esc(r.name)}（${routineTotal(r)}回）</span><button class="ghost" data-act="rrestore" data-id="${r.id}">再開</button></div>`).join('')}</div>` : ''}
   <div class="sec"><h3>📲 アプリ</h3><div class="small">${installSection()}</div></div>
   ${archived.length ? `<div class="sec"><h3>🗄️ やめた習慣</h3>
     ${archived.map((h) => `<div class="setting"><span>${esc(h.emoji)} ${esc(h.name)}（${totalOf(h)}回）</span><button class="ghost" data-act="restore" data-id="${h.id}">再開</button></div>`).join('')}</div>` : ''}
@@ -799,6 +988,18 @@ $('#archiveHabit').addEventListener('click', () => {
   }
 });
 
+/* ---------- routine dialog ---------- */
+$('#rDayPicker').innerHTML = [1, 2, 3, 4, 5, 6, 0].map((d) => `<label><input type="checkbox" name="rday" value="${d}"><span>${WD[d]}</span></label>`).join('');
+$('#routineTpls').innerHTML = ROUTINE_TEMPLATES.map((t, i) => `<button type="button" data-act="rtpl" data-i="${i}">${t.emoji} ${t.name}</button>`).join('');
+rform().addEventListener('submit', (e) => { if (!saveRoutine()) e.preventDefault(); });
+$('#cancelRoutine').addEventListener('click', () => rdlg().close());
+$('#archiveRoutine').addEventListener('click', () => {
+  const r = S.routines.find((x) => x.id === rfe('id').value);
+  if (r && confirm(`「${r.name}」をやめますか？\n（これまでの記録は残ります。⚙️からいつでも再開できます）`)) {
+    r.archived = true; save(); rdlg().close(); render();
+  }
+});
+
 /* ---------- events ---------- */
 $('#tabbar').addEventListener('click', (e) => {
   const b = e.target.closest('button[data-tab]');
@@ -815,6 +1016,12 @@ document.addEventListener('click', (e) => {
     case 'habit': toggleHabit(id); break;
     case 'edithabit': { const h = S.habits.find((x) => x.id === id); if (h) openHabit(h); break; }
     case 'addhabit': onb = { step: 1 }; render(); window.scrollTo({ top: 0 }); break;
+    case 'step': toggleStep(b.dataset.rid, b.dataset.sid); break;
+    case 'addroutine': openRoutine(null, null); break;
+    case 'editroutine': { const r = S.routines.find((x) => x.id === id); if (r) openRoutine(r); break; }
+    case 'rtpl': { const t = ROUTINE_TEMPLATES[Number(b.dataset.i)]; rfe('emoji').value = t.emoji; rfe('name').value = t.name; rfe('time').value = t.time; rfe('steps').value = t.steps.join('\n'); break; }
+    case 'rrestore': { const r = S.routines.find((x) => x.id === id); if (r) { r.archived = false; save(); render(); toast(`${esc(r.emoji)} 再開した`); } break; }
+    case 'ropen': if (openRoutines.has(id)) openRoutines.delete(id); else openRoutines.add(id); render(); break;
     case 'todo': toggleTodo(id); break;
     case 'star': starTodo(id); break;
     case 'deltodo': deleteTodo(id); break;
@@ -993,10 +1200,16 @@ function reminderConfig() {
     journalDone: !!S.journal[k],
     winsToday: winsOn(k),
     undone: hs.filter((h) => isSched(h, d) && !logOf(h, k)).length,
-    habits: hs.filter((h) => h.remindAt).map((h) => ({
-      id: h.id, name: h.name, emoji: h.emoji, cue: h.cue, tiny: h.tiny, remindAt: h.remindAt, days: h.days,
-      createdAt: h.createdAt, done: !!logOf(h, k), streak, risk: streak > 0 && noneToday,
-    })),
+    habits: [
+      ...hs.filter((h) => h.remindAt).map((h) => ({
+        id: h.id, name: h.name, emoji: h.emoji, cue: h.cue, tiny: h.tiny, remindAt: h.remindAt, days: h.days,
+        createdAt: h.createdAt, done: !!logOf(h, k), streak, risk: streak > 0 && noneToday,
+      })),
+      ...activeRoutines().filter((r) => r.time).map((r) => ({
+        id: `r:${r.id}`, name: r.name, emoji: r.emoji, cue: `最初のステップ：${r.steps[0] ? r.steps[0].text : ''}`, tiny: '1ステップ目だけ',
+        remindAt: r.time, days: r.days, createdAt: r.createdAt, done: routineDone(r, k), streak, risk: streak > 0 && noneToday,
+      })),
+    ],
   };
 }
 function syncReminders() {
@@ -1076,7 +1289,8 @@ function installSection() {
 
 function exportICS() {
   const hs = activeHabits().filter((h) => h.remindAt);
-  if (!hs.length && !S.settings.journalAt) { toast('習慣の「くわしく設定」で時刻を決めてください'); return; }
+  const rs = activeRoutines().filter((r) => r.time);
+  if (!hs.length && !rs.length && !S.settings.journalAt) { toast('習慣の「くわしく設定」で時刻を決めてください'); return; }
   const BY = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'];
   const day = todayKey().replace(/-/g, '');
   const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+/, '');
@@ -1091,6 +1305,8 @@ function exportICS() {
   ].join('\r\n');
   const events = hs.map((h) => ev(h.id, h.remindAt, h.days, `${h.emoji} ${h.name}`,
     `${h.cue ? `🕖 ${h.cue}\n` : ''}⚡ 最低ライン：${h.tiny || '2分だけ'}\n✔ 終わったら「つづく.」でクリア！`));
+  rs.forEach((r) => events.push(ev(`routine-${r.id}`, r.time, r.days, `${r.emoji} ${r.name}`,
+    `${r.steps.map((s, i) => `${i + 1}. ${s.text}`).join('\n')}\n✔ 終わったら「つづく.」でチェック！`)));
   if (S.settings.journalAt) events.push(ev('journal', S.settings.journalAt, [0, 1, 2, 3, 4, 5, 6], '📝 つづく. 今日の結果チェック', '今日の勝ちポイントを1つ記録しよう'));
   const ics = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//tsuzuku//habit//JA', 'CALSCALE:GREGORIAN', 'X-WR-CALNAME:つづく. 習慣リマインダー', ...events, 'END:VCALENDAR'].join('\r\n');
   const a = document.createElement('a');
@@ -1103,7 +1319,9 @@ function exportICS() {
 
 function handleParams(qs) {
   const p = new URLSearchParams(qs);
-  if (p.get('act') === 'habit') {
+  if (p.get('act') === 'habit' && (p.get('id') || '').startsWith('r:')) {
+    tab = 'today'; render(); // ルーティーンの通知 → 今日の画面を開く
+  } else if (p.get('act') === 'habit') {
     const id = p.get('id'), type = p.get('type') === 'tiny' ? 'tiny' : 'full';
     const h = S.habits.find((x) => x.id === id);
     tab = 'today';

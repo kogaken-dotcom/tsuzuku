@@ -273,11 +273,11 @@ details.more[open] summary { margin-bottom: 10px; }
 details.more input { background: var(--card); }
 fieldset.days { border: none; padding: 0; margin: 0 0 12px; }
 fieldset.days legend { font-size: 13px; font-weight: 800; margin-bottom: 6px; }
-#dayPicker { display: flex; gap: 5px; }
-#dayPicker label { margin: 0; flex: 1; }
-#dayPicker input { display: none; }
-#dayPicker span { display: block; text-align: center; padding: 7px 0; border-radius: 8px; background: var(--card); border: 1px solid var(--line); font-weight: 800; }
-#dayPicker input:checked + span { background: var(--accent); color: #fff; border-color: var(--accent); }
+#dayPicker, .daypick { display: flex; gap: 5px; }
+#dayPicker label, .daypick label { margin: 0; flex: 1; }
+#dayPicker input, .daypick input { display: none; }
+#dayPicker span, .daypick span { display: block; text-align: center; padding: 7px 0; border-radius: 8px; background: var(--card); border: 1px solid var(--line); font-weight: 800; }
+#dayPicker input:checked + span, .daypick input:checked + span { background: var(--accent); color: #fff; border-color: var(--accent); }
 .dialog-actions { display: flex; gap: 8px; align-items: center; }
 
 .sheet { max-height: 88vh; overflow-y: auto; }
@@ -309,3 +309,36 @@ fieldset.days legend { font-size: 13px; font-weight: 800; margin-bottom: 6px; }
 }
 .toast.show { opacity: 1; transform: translate(-50%, 0); }
 #confetti { position: fixed; inset: 0; pointer-events: none; z-index: 60; width: 100vw; height: 100vh; }
+
+/* ---------- routines ---------- */
+.routine { border: 1px solid var(--line); border-left: 4px solid var(--hc); border-radius: 14px; padding: 12px; margin-bottom: 10px; background: var(--card2); }
+.routine.done { background: color-mix(in srgb, var(--hc) 12%, var(--card2)); }
+.r-head { display: flex; align-items: center; gap: 10px; }
+.r-emo { width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; font-size: 22px; background: color-mix(in srgb, var(--hc) 20%, var(--card)); flex-shrink: 0; font-weight: 900; }
+.routine.done .r-emo { background: var(--hc); color: #fff; }
+.r-title { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.r-title b { font-size: 15px; }
+.r-title span { font-size: 11px; color: var(--muted); font-weight: 700; }
+.r-prog { font-size: 22px; font-weight: 900; }
+.r-prog small { font-size: 13px; color: var(--muted); }
+.r-edit { background: none; border: none; color: var(--muted); font-size: 16px; padding: 4px; }
+.r-bar { display: flex; gap: 3px; margin: 10px 0 8px; }
+.r-bar i { flex: 1; height: 8px; border-radius: 4px; background: var(--card); transition: background .3s; }
+.r-bar i.on { background: var(--hc); }
+.r-done { font-size: 13px; font-weight: 800; margin-bottom: 6px; }
+.steps { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
+.steps.hide { display: none; }
+.step { display: flex; align-items: center; gap: 10px; text-align: left; width: 100%; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 9px 10px; }
+.step .sc { width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; font-size: 12px; font-weight: 900; border: 2px solid var(--line); color: var(--muted); flex-shrink: 0; }
+.step .st { flex: 1; overflow-wrap: anywhere; }
+.step em { font-style: normal; font-size: 11px; font-weight: 900; color: var(--hc); white-space: nowrap; }
+.step.next { border-color: var(--hc); box-shadow: 0 0 0 1px var(--hc) inset; }
+.step.next .sc { border-color: var(--hc); color: var(--text); }
+.step.on { opacity: .6; }
+.step.on .sc { background: var(--hc); border-color: var(--hc); color: #fff; }
+.step.on .st { text-decoration: line-through; }
+.routine .wchain { margin: 0; }
+.tplrow { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+.tplrow button { background: var(--card2); border: 1px solid var(--line); border-radius: 99px; padding: 6px 12px; font-size: 13px; font-weight: 700; }
+.tplrow button:hover { border-color: var(--accent); }
+dialog textarea { margin-top: 4px; font-weight: 400; resize: vertical; }

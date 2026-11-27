@@ -73,6 +73,36 @@
     </form>
   </dialog>
 
+  <dialog id="routineDialog">
+    <form method="dialog" id="routineForm">
+      <h2 id="routineTitle">新しいルーティーン</h2>
+      <div class="tplrow" id="routineTpls"></div>
+      <input type="hidden" name="id">
+      <div class="row">
+        <label class="emoji-field">絵文字<input name="emoji" maxlength="4"></label>
+        <label class="grow">名前<input name="name" placeholder="例：朝のルーティーン"></label>
+      </div>
+      <label>📝 ステップ（1行に1つ・上から順番に）
+        <textarea name="steps" rows="5" placeholder="カーテンを開ける&#10;水を1杯飲む&#10;ストレッチ3分"></textarea>
+        <small>前のステップが終わったら次へ。1つずつ連鎖させると、考えずに動けるようになります</small>
+      </label>
+      <label>⏰ 開始時刻（任意）
+        <input type="time" name="time" style="width:auto">
+        <small>⚙️で通知をオンにすると、まだならこの時刻にお知らせします</small>
+      </label>
+      <fieldset class="days">
+        <legend>やる曜日</legend>
+        <div id="rDayPicker" class="daypick"></div>
+      </fieldset>
+      <div class="dialog-actions">
+        <button type="button" class="ghost danger" id="archiveRoutine">やめる</button>
+        <span class="spacer"></span>
+        <button type="button" class="ghost" id="cancelRoutine">キャンセル</button>
+        <button type="submit" class="primary">保存</button>
+      </div>
+    </form>
+  </dialog>
+
   <dialog id="settingsDialog" class="sheet">
     <div class="sheet-head"><h2>⚙️ 設定</h2><button class="ghost" data-act="closesettings">閉じる</button></div>
     <div id="settingsBody"></div>
