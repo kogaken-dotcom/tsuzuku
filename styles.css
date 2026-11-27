@@ -342,3 +342,78 @@ fieldset.days legend { font-size: 13px; font-weight: 800; margin-bottom: 6px; }
 .tplrow button { background: var(--card2); border: 1px solid var(--line); border-radius: 99px; padding: 6px 12px; font-size: 13px; font-weight: 700; }
 .tplrow button:hover { border-color: var(--accent); }
 dialog textarea { margin-top: 4px; font-weight: 400; resize: vertical; }
+
+/* ---------- 今日の判断基準 ---------- */
+.compass { border-left: 4px solid var(--gold); background: linear-gradient(135deg, #2a2416, var(--card) 70%); }
+.c-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+.c-label { font-size: 12px; font-weight: 900; letter-spacing: .08em; color: var(--gold); }
+.principle { font-size: 17px; font-weight: 800; line-height: 1.6; }
+.goalstrip { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); font-size: 13px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 4px 6px; }
+.goalstrip b { color: var(--text); font-size: 15px; }
+.goalstrip .sep { opacity: .5; }
+
+/* ---------- 活動量 ---------- */
+.act.met { border-color: color-mix(in srgb, var(--good) 50%, var(--line)); }
+.metric { display: grid; grid-template-columns: 84px 1fr 38px 40px 38px; align-items: center; gap: 8px; padding: 6px 0; }
+.m-name { font-weight: 800; font-size: 14px; display: flex; flex-direction: column; line-height: 1.25; }
+.m-name small { font-size: 11px; color: var(--muted); font-weight: 700; }
+.m-bar { height: 10px; border-radius: 99px; background: var(--card2); overflow: hidden; }
+.m-bar i { display: block; height: 100%; border-radius: 99px; background: var(--blue); transition: width .4s; }
+.metric.ok .m-bar i { background: var(--good); }
+.m-btn { width: 38px; height: 38px; border-radius: 12px; border: 1px solid var(--line); background: var(--card2); font-size: 20px; font-weight: 900; padding: 0; }
+.m-btn.plus { background: linear-gradient(135deg, var(--accent), var(--accent2)); border: none; color: #fff; }
+.m-btn:active { transform: scale(.9); }
+.m-val { text-align: center; font-size: 22px; font-weight: 900; }
+.metric.ok .m-val { color: var(--good); }
+
+/* ---------- 24時間ルール ---------- */
+.modes { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+.modes button { background: var(--card2); border: 1px solid var(--line); border-radius: 99px; padding: 6px 11px; font-size: 12px; font-weight: 800; color: var(--muted); }
+.modes button.on { border-color: var(--accent); color: var(--text); background: rgba(255,122,26,.15); }
+.due { display: inline-block; font-size: 11px; font-weight: 800; color: var(--muted); background: var(--card2); border-radius: 6px; padding: 1px 6px; margin-left: 4px; white-space: nowrap; }
+.due.soon { color: var(--gold); }
+.due.over { color: #fff; background: #c0392b; }
+.todo.over { background: rgba(192, 57, 43, .12); border-radius: 10px; padding-left: 8px; padding-right: 4px; }
+
+/* ---------- 仕事タブ ---------- */
+.g-block { padding: 12px 0; border-bottom: 1px solid var(--line); }
+.g-block:last-of-type { border-bottom: none; }
+.g-row { display: flex; align-items: baseline; justify-content: space-between; font-weight: 800; gap: 8px; }
+.g-big { font-size: 30px; font-weight: 900; }
+.g-big small { font-size: 15px; color: var(--muted); font-weight: 700; }
+.g-bar { height: 12px; border-radius: 99px; background: var(--card2); overflow: hidden; margin: 6px 0 4px; }
+.g-bar i { display: block; height: 100%; border-radius: 99px; background: linear-gradient(90deg, var(--accent), var(--gold)); transition: width .6s; }
+.g-bar.inc i { background: linear-gradient(90deg, #199e70, var(--good)); }
+.g-sub { font-size: 12px; font-weight: 900; color: var(--muted); margin-bottom: 6px; letter-spacing: .04em; }
+.g-dead { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; font-weight: 800; }
+.inc-in { display: flex; align-items: center; gap: 4px; }
+.inc-in input { width: 130px; text-align: right; padding: 6px 8px; }
+.cond { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; background: var(--card2); border: 1px solid var(--line); border-radius: 10px; padding: 9px 10px; margin-bottom: 6px; }
+.cond .sc { width: 24px; height: 24px; border-radius: 7px; border: 2px solid var(--line); display: grid; place-items: center; font-size: 12px; font-weight: 900; color: var(--muted); flex-shrink: 0; }
+.cond.on { border-color: color-mix(in srgb, var(--good) 50%, var(--line)); }
+.cond.on .sc { background: var(--good); border-color: var(--good); color: #0e1117; }
+.cond.on span:last-child { color: var(--muted); }
+.mbars { display: flex; align-items: flex-end; gap: 6px; height: 110px; }
+.mb { flex: 1; display: flex; flex-direction: column; align-items: center; height: 100%; gap: 4px; max-width: 40px; }
+.mb-col { flex: 1; width: 100%; display: flex; align-items: flex-end; }
+.mb-col i { display: block; width: 100%; border-radius: 4px 4px 0 0; background: var(--blue); }
+.mb-col i.warn { background: var(--accent); }
+.mb span { font-size: 9px; color: var(--muted); }
+.mrow { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 7px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+.mrow:last-child { border-bottom: none; }
+.date-in { max-width: 150px; flex: 0 0 auto !important; }
+.rq { display: block; font-size: 13px; font-weight: 800; margin-bottom: 10px; }
+.rq textarea, .rq input { margin-top: 4px; font-weight: 400; }
+.mset { display: grid; grid-template-columns: 1fr 72px auto; gap: 6px; margin-bottom: 6px; align-items: center; }
+.sq14 { display: grid; grid-template-columns: repeat(14, 1fr); gap: 4px; margin-bottom: 4px; }
+.sq14 i { aspect-ratio: 1; border-radius: 5px; background: var(--card2); }
+.sq14 i.on { background: var(--good); }
+.sq14 i.today { outline: 2px solid var(--accent); outline-offset: 1px; }
+dialog label.inline { display: flex; align-items: flex-start; gap: 8px; font-weight: 600; margin-bottom: 8px; }
+dialog label.inline input { width: auto; margin-top: 3px; }
+#meetingForm:not(:has(input[name=first]:checked)) .first-only { display: none; }
+.guard { background: var(--card2); border: 1px solid var(--line); border-radius: 12px; padding: 12px; margin: 6px 0 14px; }
+.guard b { display: block; margin-bottom: 2px; }
+.guard small { margin-bottom: 8px; }
+.guard textarea { background: var(--card); }
+@media (max-width: 380px) { .metric { grid-template-columns: 70px 1fr 34px 34px 34px; gap: 6px; } .m-btn { width: 34px; height: 34px; } }

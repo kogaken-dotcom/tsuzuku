@@ -38,6 +38,7 @@ function defaultState() {
     logs: {},       // { 'YYYY-MM-DD': { habitId: { type } } }
     todos: [],      // { id, text, frog, done, doneAt, createdAt }
     journal: {},    // { 'YYYY-MM-DD': { mood, text } }
+    work: defaultWork(), // 仕事（最低ライン・目標・面談・フォロー・ふりかえり・私の基準）
     routines: [],   // { id, color, emoji, name, time, steps:[{id,text}], days, createdAt, archived }
     rlogs: {},      // { 'YYYY-MM-DD': { routineId: { checked:[stepId], done } } }
     awarded: {},
@@ -53,6 +54,8 @@ function defaultState() {
 function hydrate(obj) {
   const st = Object.assign(defaultState(), obj);
   st.settings = Object.assign(defaultState().settings, obj.settings || {});
+  st.work = Object.assign(defaultWork(), obj.work || {});
+  st.work.goal = Object.assign(defaultWork().goal, (obj.work || {}).goal || {});
   st.habits.forEach((h, i) => { if (h.color == null) h.color = i; });
   st.nextColor = Math.max(st.nextColor || 0, st.habits.length);
   return st;
@@ -96,14 +99,423 @@ const totalOf = (h) => Object.values(S.logs).filter((l) => l[h.id]).length;
 const routinesDoneOn = (k) => (S.rlogs[k] ? Object.values(S.rlogs[k]).filter((x) => x.done).length : 0);
 function winsOn(k) {
   const habits = S.logs[k] ? Object.keys(S.logs[k]).length : 0;
-  return habits + routinesDoneOn(k) + S.todos.filter((t) => t.done && t.doneAt === k).length;
+  return habits + routinesDoneOn(k) + (activityMetOn(k) ? 1 : 0) + S.todos.filter((t) => t.done && t.doneAt === k).length;
 }
 function totalWins() {
   let n = 0;
   for (const k in S.logs) n += Object.keys(S.logs[k]).length;
   for (const k in S.rlogs) n += routinesDoneOn(k);
+  for (const k in S.work.alog) if (activityMetOn(k)) n++;
   return n + S.todos.filter((t) => t.done).length;
 }
+
+/* =========================================================
+ * 仕事：毎日の最低ライン・目標と期限・面談チェック・契約後フォロー・
+ *       ABCセットアップ・週1ふりかえり・私の基準・Notion用コピー
+ * ※ 個人の目標や考え方はすべてアプリ内で入力し、この端末にだけ保存されます
+ * ========================================================= */
+function defaultWork() {
+  return {
+    principles: '', mentor: '',
+    metrics: [{ id: 'm1', name: '連絡', min: 5 }, { id: 'm2', name: 'アポ獲得', min: 1 }, { id: 'm3', name: '面談', min: 1 }],
+    alog: {},       // { 'YYYY-MM-DD': { metricId: count } }
+    meetings: [],   // { id, date, who, first, checks:{}, score, next, note }
+    contracts: [],  // { id, date, who }
+    abc: { checked: [] },
+    reviews: {},    // { 週の月曜日: { a:[...], savedAt } }
+    goal: { contractTarget: 0, contractDeadline: '', contractStart: dkey(), conditions: [], deadlineDate: '', deadlineLabel: '', incomeTarget: 0, income: {}, history: [] },
+  };
+}
+const W = () => S.work;
+const metricsWithMin = () => W().metrics.filter((m) => m.min > 0);
+const actOn = (k, m) => (W().alog[k] && W().alog[k][m.id]) || 0;
+const activityMetOn = (k) => metricsWithMin().length > 0 && metricsWithMin().every((m) => actOn(k, m) >= m.min);
+function activityStreak() {
+  let s = activityMetOn(todayKey()) ? 1 : 0;
+  let d = addDays(new Date(), -1);
+  for (let i = 0; i < 3650; i++) { if (activityMetOn(dkey(d))) s++; else break; d = addDays(d, -1); }
+  return s;
+}
+const daysLeft = (k) => Math.max(0, diffDays(todayKey(), k));
+const contractCount = () => W().contracts.filter((c) => c.date >= (W().goal.contractStart || '0000')).length;
+const mentorName = () => W().mentor || '相談相手';
+const hashStr = (s) => { let h = 0; for (const ch of s) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return h; };
+
+// 貼り付けた「考え方・行動基準」から、箇条書きの1行ずつを取り出す
+function parsePrinciples(text) {
+  const out = [];
+  for (let line of String(text || '').split(/\r?\n/)) {
+    line = line.trim();
+    if (!line || /^[━─＝=\-—_]{3,}/.test(line) || /^[【■◆●]/.test(line) || /^[→※]/.test(line)) continue;
+    line = line.replace(/^(・|[-*•]|[0-9０-９]+[.．、)）]\s*)/, '').trim();
+    if (line.length < 4 || line.length > 140) continue;
+    if (!out.includes(line)) out.push(line);
+  }
+  return out;
+}
+
+/* ----- 今日の画面：判断基準 ----- */
+let compassOffset = 0;
+function goalStrip() {
+  const g = W().goal, parts = [];
+  if (g.contractTarget) parts.push(`🎯 契約 <b>${contractCount()}</b>/${g.contractTarget}${g.contractDeadline ? `（残り${daysLeft(g.contractDeadline)}日）` : ''}`);
+  if (g.deadlineDate) parts.push(`⏳ ${esc(g.deadlineLabel || '期限')}まで <b>${daysLeft(g.deadlineDate)}</b>日`);
+  return parts.length ? `<div class="goalstrip">${parts.join('<span class="sep">・</span>')}</div>` : '';
+}
+function compassCard() {
+  const ps = parsePrinciples(W().principles);
+  if (!ps.length) {
+    return `<section class="card compass">
+      <div class="c-top"><span class="c-label">🧭 今日の判断基準</span></div>
+      <div class="small muted">自分の「考え方・行動基準」を登録すると、毎日ここに1つずつ表示されます。</div>
+      <button class="ghost" data-act="gotowork" style="margin-top:8px">私の基準を登録する</button>
+      ${goalStrip()}
+    </section>`;
+  }
+  const i = (hashStr(todayKey()) + compassOffset) % ps.length;
+  return `<section class="card compass">
+    <div class="c-top"><span class="c-label">🧭 今日の判断基準</span><button class="linkbtn" data-act="compassnext">別のを見る</button></div>
+    <div class="principle">${esc(ps[i])}</div>
+    ${goalStrip()}
+  </section>`;
+}
+
+/* ----- 今日の画面：活動量（最低ライン） ----- */
+function activityCard() {
+  const k = todayKey(), ms = W().metrics;
+  if (!ms.length) return '';
+  const met = activityMetOn(k);
+  const remain = metricsWithMin().reduce((a, m) => a + Math.max(0, m.min - actOn(k, m)), 0);
+  return `<section class="card act ${met ? 'met' : ''}">
+    <h2>📊 今日の活動量 <span class="sub">${met ? '✔ 最低ラインクリア' : `最低ラインまで あと${remain}`}</span></h2>
+    ${ms.map((m) => {
+      const v = actOn(k, m), pct = m.min ? Math.min(100, (v / m.min) * 100) : (v ? 100 : 0);
+      return `<div class="metric ${m.min && v >= m.min ? 'ok' : ''}">
+        <div class="m-name">${esc(m.name)}<small>${m.min ? `最低 ${m.min}` : '記録のみ'}</small></div>
+        <div class="m-bar"><i style="width:${pct}%"></i></div>
+        <button class="m-btn" data-act="actminus" data-id="${m.id}" aria-label="${esc(m.name)}を減らす">−</button>
+        <div class="m-val">${v}</div>
+        <button class="m-btn plus" data-act="actplus" data-id="${m.id}" aria-label="${esc(m.name)}を増やす">＋</button>
+      </div>`;
+    }).join('')}
+    <div class="small muted" style="margin-top:8px">🔥 最低ライン連続 <b>${activityStreak()}</b>日 ・ 外からの刺激に頼らず、毎日このラインだけは守る</div>
+  </section>`;
+}
+function bumpActivity(id, d, silent) {
+  const k = todayKey(), m = W().metrics.find((x) => x.id === id);
+  if (!m) return;
+  const wasMet = activityMetOn(k), first = winsOn(k) === 0;
+  W().alog[k] = W().alog[k] || {};
+  W().alog[k][id] = Math.max(0, (W().alog[k][id] || 0) + d);
+  const met = activityMetOn(k);
+  if (met && !wasMet) { toast('📊 今日の最低ラインクリア！'); confetti(100); afterWin(first); }
+  else if (!silent && d > 0 && m.min && W().alog[k][id] === m.min) toast(`✔ ${esc(m.name)} 最低ライン到達`);
+  if (silent) return;
+  save(); render();
+}
+
+/* ----- 24時間ルール ----- */
+let todoMode = '';
+const TODO_KIND = { insight: '💡', regret: '😤', follow: '📞', meet: '📅' };
+function dueLabel(t) {
+  if (!t.due || t.done) return '';
+  const ms = t.due - Date.now();
+  if (ms < 0) return '<span class="due over">⚠️ 期限切れ</span>';
+  const h = Math.floor(ms / 3600000);
+  return `<span class="due ${h < 3 ? 'soon' : ''}">⏳ 残り${h >= 1 ? `${h}時間` : `${Math.max(1, Math.ceil(ms / 60000))}分`}</span>`;
+}
+const overdueCount = () => S.todos.filter((t) => !t.done && t.due && t.due < Date.now()).length;
+
+/* ----- 目標と期限 ----- */
+function goalCard() {
+  const g = W().goal;
+  const set = g.contractTarget || g.deadlineDate || g.incomeTarget || g.conditions.length;
+  if (!set) {
+    return `<section class="card"><h2>🎯 目標と期限</h2>
+      <div class="empty small">契約目標・達成条件・期限・収入の基準を登録すると、毎日の画面で確認できます。</div>
+      <button class="primary" data-act="editgoal" style="width:100%">目標を設定する</button></section>`;
+  }
+  const cc = contractCount(), ym = todayKey().slice(0, 7), inc = Number(g.income[ym] || 0);
+  const left = g.contractDeadline ? daysLeft(g.contractDeadline) : null;
+  const pace = left && g.contractTarget > cc ? ((g.contractTarget - cc) / Math.max(1, left / 7)).toFixed(1) : null;
+  const okMonths = Object.values(g.income).filter((v) => g.incomeTarget && Number(v) >= g.incomeTarget).length;
+  return `<section class="card goal">
+    <h2>🎯 目標と期限 <button class="linkbtn" data-act="editgoal" style="margin-left:auto">編集</button></h2>
+    ${g.contractTarget ? `<div class="g-block">
+      <div class="g-row"><span>契約</span><span class="g-big">${cc}<small> / ${g.contractTarget}</small></span></div>
+      <div class="g-bar"><i style="width:${Math.min(100, (cc / g.contractTarget) * 100)}%"></i></div>
+      <div class="small muted">${left !== null ? `期限まで残り <b>${left}</b>日` : ''}${cc >= g.contractTarget ? ' ・ 🎉 達成！' : pace ? ` ・ 必要ペース 週${pace}件` : ''}</div>
+    </div>` : ''}
+    ${g.conditions.length ? `<div class="g-block">
+      <div class="g-sub">達成条件 ${g.conditions.filter((c) => c.done).length} / ${g.conditions.length}</div>
+      ${g.conditions.map((c) => `<button class="cond ${c.done ? 'on' : ''}" data-act="cond" data-id="${c.id}"><span class="sc">${c.done ? '✔' : ''}</span><span>${esc(c.text)}</span></button>`).join('')}
+    </div>` : ''}
+    ${g.deadlineDate ? `<div class="g-block g-dead">
+      <span>⏳ ${esc(g.deadlineLabel || '期限')}</span><span class="g-big">${daysLeft(g.deadlineDate)}<small>日</small></span>
+      <span class="small muted">${g.deadlineDate.replace(/-/g, '/')}</span>
+    </div>` : ''}
+    ${g.incomeTarget ? `<div class="g-block">
+      <div class="g-row"><span>今月の収入</span><span class="inc-in"><input type="number" id="incomeInput" value="${inc || ''}" placeholder="0" inputmode="numeric">円</span></div>
+      <div class="g-bar inc"><i style="width:${Math.min(100, (inc / g.incomeTarget) * 100)}%"></i></div>
+      <div class="small muted">基準 ${g.incomeTarget.toLocaleString()}円 ${inc >= g.incomeTarget ? '・ ✔ 今月クリア' : `まで あと${(g.incomeTarget - inc).toLocaleString()}円`} ・ 基準を超えた月 ${okMonths}</div>
+    </div>` : ''}
+    ${g.history.length ? `<details class="small"><summary>目標の変更履歴（${g.history.length}）</summary>
+      ${g.history.slice().reverse().map((h) => `<div class="entry"><div class="d">${h.date}</div><p>${esc(h.change)}<br>理由：${esc(h.reason)}${h.told ? `（${esc(mentorName())}に共有済み）` : ''}</p></div>`).join('')}
+    </details>` : ''}
+  </section>`;
+}
+function openGoal() {
+  const g = W().goal;
+  openForm(`<form method="dialog" id="goalForm">
+    <h2>🎯 目標と期限</h2>
+    <div class="row"><label class="grow">契約目標（件）<input type="number" name="contractTarget" min="0" value="${g.contractTarget || ''}" inputmode="numeric"></label>
+      <label class="grow">期限<input type="date" name="contractDeadline" value="${g.contractDeadline}"></label></div>
+    <label>契約を数え始める日<input type="date" name="contractStart" value="${g.contractStart}"><small>この日以降に「契約後フォロー」で記録した契約を数えます</small></label>
+    <label>達成条件（1行に1つ）<textarea name="conditions" rows="3" placeholder="例：資格試験に合格">${esc(g.conditions.map((c) => c.text).join('\n'))}</textarea></label>
+    <div class="row"><label class="grow">期限の名前<input name="deadlineLabel" value="${esc(g.deadlineLabel)}" placeholder="例：判断の期限"></label>
+      <label class="grow">期限日<input type="date" name="deadlineDate" value="${g.deadlineDate}"></label></div>
+    <label>毎月の収入の基準（円）<input type="number" name="incomeTarget" min="0" value="${g.incomeTarget || ''}" inputmode="numeric"></label>
+    <div class="guard">
+      <b>🔒 目標の定義を変えるとき</b>
+      <small>一度決めた目標を変えるときは、理由を書き、${esc(mentorName())}に伝えてから保存します（新しく決めるときは不要）</small>
+      <label>変える理由<textarea name="reason" rows="2"></textarea></label>
+      <label class="inline"><input type="checkbox" name="told"> ${esc(mentorName())}に伝えた</label>
+    </div>
+    <div class="dialog-actions"><span class="spacer"></span><button type="button" class="ghost" data-act="closeform">キャンセル</button><button class="primary">保存</button></div>
+  </form>`);
+}
+function saveGoal(f) {
+  const g = W().goal, v = (n) => f.elements.namedItem(n).value.trim();
+  const next = {
+    contractTarget: Number(v('contractTarget')) || 0, contractDeadline: v('contractDeadline'), contractStart: v('contractStart') || g.contractStart,
+    deadlineLabel: v('deadlineLabel'), deadlineDate: v('deadlineDate'), incomeTarget: Number(v('incomeTarget')) || 0,
+  };
+  const labels = { contractTarget: '契約目標', contractDeadline: '契約の期限', deadlineDate: '期限日', incomeTarget: '収入の基準' };
+  const changes = Object.keys(labels).filter((key) => g[key] && String(g[key]) !== String(next[key]))
+    .map((key) => `${labels[key]}：${g[key]} → ${next[key] || 'なし'}`);
+  if (changes.length) {
+    const reason = v('reason'), told = f.elements.namedItem('told').checked;
+    if (!reason || !told) { toast(`目標を変えるときは、理由を書いて${esc(mentorName())}に伝えてから`); return false; }
+    g.history.push({ date: todayKey(), change: changes.join(' / '), reason, told });
+  }
+  const lines = v('conditions').split('\n').map((s) => s.trim()).filter(Boolean);
+  g.conditions = lines.map((text) => g.conditions.find((c) => c.text === text) || { id: uid(), text, done: false });
+  Object.assign(g, next);
+  save(); render(); toast('🎯 目標を保存しました');
+  return true;
+}
+
+/* ----- 面談チェック ----- */
+const MEET_CHECKS = [
+  ['customer', 'お客様の利益を最優先にできた（守れた）', false],
+  ['honest', '相手が損をしないために、言うべきことを言えた', false],
+  ['next', '次の約束をその場で日時まで決めた', false],
+  ['nopitch', '事実確認とニーズ把握に徹し、商品の提案はしなかった', true],
+  ['numbers', '数字で聞いた（引退する年齢・毎月の必要額など）', false],
+  ['deep', '縦に深掘る質問をした', false],
+  ['noscare', '不安をあおらず、最後は背中を押した', false],
+];
+function meetingCard() {
+  const ms = W().meetings.slice().sort((a, b) => (a.date < b.date ? 1 : -1));
+  const n = ms.length, kept = ms.filter((m) => m.checks.customer).length;
+  const last10 = ms.slice(0, 10).reverse();
+  return `<section class="card">
+    <h2>🤝 面談チェック <span class="sub">${n ? `守れた率 ${Math.round((kept / n) * 100)}%（${kept}/${n}）` : ''}</span></h2>
+    <div class="small muted" style="margin-bottom:8px">自分の印象ではなく、お客様の結果に集中できたかを毎回記録する</div>
+    ${n ? `<div class="mbars">${last10.map((m) => `<div class="mb" title="${md(m.date)} ${esc(m.who)}：${m.score}%"><div class="mb-col"><i style="height:${Math.max(6, m.score)}%" class="${m.checks.customer ? '' : 'warn'}"></i></div><span>${md(m.date)}</span></div>`).join('')}</div>
+      <div class="small muted" style="margin:4px 0 8px">棒＝チェックの達成率（直近10件）・🛡️ 守れた／⚠️ 守れなかった</div>` : ''}
+    ${ms.slice(0, 5).map((m) => `<div class="mrow"><span>${m.checks.customer ? '🛡️' : '⚠️'} ${md(m.date)} ${esc(m.who || '（名前なし）')}${m.first ? ' ・初回' : ''}</span><span class="small muted">${m.score}%</span></div>`).join('')}
+    <button class="primary" data-act="addmeeting" style="width:100%;margin-top:10px">＋ 面談を記録</button>
+  </section>`;
+}
+function openMeeting() {
+  openForm(`<form method="dialog" id="meetingForm">
+    <h2>🤝 面談を記録</h2>
+    <div class="row"><label class="grow">相手（イニシャル推奨）<input name="who" placeholder="例：Aさん" autocomplete="off"></label>
+      <label>日付<input type="date" name="date" value="${todayKey()}"></label></div>
+    <label class="inline"><input type="checkbox" name="first"> 初回面談</label>
+    <div class="g-sub" style="margin-top:6px">ふりかえりチェック</div>
+    ${MEET_CHECKS.map(([key, label, firstOnly]) => `<label class="inline ${firstOnly ? 'first-only' : ''}"><input type="checkbox" name="c_${key}"> ${label}${firstOnly ? '（初回）' : ''}</label>`).join('')}
+    <label style="margin-top:8px">📅 次の約束（日時）<input type="datetime-local" name="next"><small>入れると、その日の「やること」に自動で入ります</small></label>
+    <label>メモ（気づき・次回への改善）<textarea name="note" rows="2"></textarea><small>改善点を書くと、24時間ルールの「やること」になります</small></label>
+    <div class="dialog-actions"><span class="spacer"></span><button type="button" class="ghost" data-act="closeform">キャンセル</button><button class="primary">保存</button></div>
+  </form>`);
+}
+function saveMeeting(f) {
+  const v = (n) => f.elements.namedItem(n);
+  const first = v('first').checked;
+  const checks = {};
+  let total = 0, ok = 0;
+  MEET_CHECKS.forEach(([key, , firstOnly]) => {
+    if (firstOnly && !first) return;
+    checks[key] = v(`c_${key}`).checked; total++; if (checks[key]) ok++;
+  });
+  const m = { id: uid(), date: v('date').value || todayKey(), who: v('who').value.trim(), first, checks, score: Math.round((ok / total) * 100), next: v('next').value, note: v('note').value.trim() };
+  W().meetings.push(m);
+  if (m.next) {
+    const [nd, nt] = m.next.split('T');
+    S.todos.push({ id: uid(), text: `${m.who || '次回'}との面談 ${md(nd)} ${nt || ''}`.trim(), frog: false, done: false, doneAt: null, createdAt: todayKey(), kind: 'meet', date: nd, due: null });
+  }
+  if (m.note) {
+    S.todos.push({ id: uid(), text: `面談の改善：${m.note}`, frog: false, done: false, doneAt: null, createdAt: todayKey(), kind: 'insight', due: Date.now() + 86400000, date: null });
+  }
+  const meetMetric = W().metrics.find((x) => x.name.includes('面談'));
+  if (meetMetric && m.date === todayKey()) bumpActivity(meetMetric.id, 1, true);
+  toast(m.checks.customer ? `🛡️ 記録しました（チェック ${m.score}%）` : '⚠️ 記録しました。「守れなかった」理由を自責で考えよう');
+  save(); render();
+}
+
+/* ----- 契約後フォロー ----- */
+const FOLLOW_STEPS = [[1, '翌日の連絡'], [7, '1週間後の連絡'], [30, '1か月後の連絡']];
+function followCard() {
+  const k = todayKey();
+  const upcoming = S.todos.filter((t) => !t.done && t.kind === 'follow' && t.date && t.date > k).sort((a, b) => (a.date < b.date ? -1 : 1));
+  const cs = W().contracts.slice().sort((a, b) => (a.date < b.date ? 1 : -1));
+  return `<section class="card">
+    <h2>📞 契約後フォロー <span class="sub">${cs.length ? `記録 ${cs.length}件` : ''}</span></h2>
+    <form id="contractForm" class="todo-add"><input name="who" placeholder="契約者（イニシャル推奨）" autocomplete="off"><input type="date" name="date" value="${k}" class="date-in"><button class="primary">記録</button></form>
+    <div class="small muted">記録すると「翌日・1週間後・1か月後」の連絡が、その日の「やること」に自動で入ります</div>
+    ${upcoming.length ? `<div class="g-sub" style="margin-top:12px">これからのフォロー</div>
+      ${upcoming.slice(0, 8).map((t) => `<div class="mrow"><span>📞 ${esc(t.text)}</span><span class="small muted">${md(t.date)}</span></div>`).join('')}` : ''}
+    ${cs.length ? `<details class="small" style="margin-top:8px"><summary>契約の記録（${cs.length}）</summary>
+      ${cs.map((c) => `<div class="mrow"><span>${md(c.date)} ${esc(c.who)}</span><button class="linkbtn" data-act="delcontract" data-id="${c.id}">削除</button></div>`).join('')}
+    </details>` : ''}
+  </section>`;
+}
+function saveContract(f) {
+  const who = f.elements.namedItem('who').value.trim() || '契約者';
+  const date = f.elements.namedItem('date').value || todayKey();
+  const c = { id: uid(), date, who };
+  W().contracts.push(c);
+  FOLLOW_STEPS.forEach(([n, label]) => {
+    S.todos.push({ id: uid(), text: `${who}：${label}`, frog: false, done: false, doneAt: null, createdAt: todayKey(), kind: 'follow', date: dkey(addDays(parseKey(date), n)), due: null, ref: c.id });
+  });
+  const g = W().goal;
+  if (g.contractTarget) celebrate('🤝', `契約 ${contractCount()} / ${g.contractTarget}`, 'フォローの予定（翌日・1週間後・1か月後）を「やること」に入れました。<br>ゴールは「この人から紹介をもらうこと」。');
+  else toast('🤝 契約を記録。フォローの予定を入れました');
+  confetti(120);
+  save(); render();
+}
+
+/* ----- ABCセットアップ ----- */
+const ABC_STEPS = [
+  'C（お客様）を知る：現状・悩み・聞きたいこと',
+  'A（紹介する専門家）を伝える：人柄・実績・専門性',
+  '面談を整える：目的・ゴール・安心感',
+  '組む前のチェックリストを確認した',
+];
+function abcCard() {
+  const a = W().abc;
+  const n = a.checked.length;
+  return `<section class="card">
+    <h2>🔺 ABCセットアップ <span class="sub">${n}/${ABC_STEPS.length}</span></h2>
+    <div class="small muted" style="margin-bottom:8px">Bとしての自分の役割。面談を組む前に上から確認する</div>
+    ${ABC_STEPS.map((s, i) => `<button class="cond ${a.checked.includes(i) ? 'on' : ''}" data-act="abc" data-i="${i}"><span class="sc">${a.checked.includes(i) ? '✔' : i + 1}</span><span>${s}</span></button>`).join('')}
+    ${n ? '<button class="linkbtn" data-act="abcreset">リセットして次のABCへ</button>' : ''}
+  </section>`;
+}
+
+/* ----- 週1ふりかえり ----- */
+const REVIEW_QS = [
+  '今週いちばん前に進んだことは？',
+  '教えた・伝えた結果、相手は動いたか？',
+  'うまくいかなかったことの原因は、自分のどこにある？（完全自責）',
+  '目標を見直して、来週いちばん大事な一つの行動は？',
+  '最低ラインは守れたか？ 来週変えることは？',
+];
+const reviewKey = () => { const d = new Date(); return dkey(d.getDay() === 1 ? addDays(mondayOf(d), -7) : mondayOf(d)); };
+function reviewCard() {
+  const key = reviewKey(), r = W().reviews[key] || {};
+  const past = Object.entries(W().reviews).filter(([k]) => k !== key).sort((a, b) => (a[0] < b[0] ? 1 : -1)).slice(0, 8);
+  return `<section class="card">
+    <h2>🗓️ 週1ふりかえり <span class="sub">${md(key)}の週${r.savedAt ? ' ✔ 記入済み' : ''}</span></h2>
+    <div class="small muted" style="margin-bottom:8px">日曜か月曜に、じっくり考える時間をとる</div>
+    <form id="reviewForm">
+      ${REVIEW_QS.map((q, i) => `<label class="rq">${q}<textarea name="q${i}" rows="2">${esc((r.a || [])[i] || '')}</textarea></label>`).join('')}
+      <button class="primary" style="width:100%">保存</button>
+    </form>
+    ${past.length ? `<details class="small" style="margin-top:10px"><summary>過去のふりかえり（${past.length}）</summary>
+      ${past.map(([k, v]) => `<div class="entry"><div class="d">${md(k)}の週</div>${(v.a || []).map((x, i) => (x ? `<p><b>${REVIEW_QS[i]}</b><br>${esc(x)}</p>` : '')).join('')}</div>`).join('')}
+    </details>` : ''}
+  </section>`;
+}
+
+/* ----- 活動量の設定 ----- */
+function metricsCard() {
+  const k = todayKey();
+  let sq = '';
+  for (let i = 13; i >= 0; i--) {
+    const dk = dkey(addDays(new Date(), -i));
+    sq += `<i class="${activityMetOn(dk) ? 'on' : ''} ${dk === k ? 'today' : ''}" title="${md(dk)}"></i>`;
+  }
+  return `<section class="card">
+    <h2>📊 活動量の最低ライン <span class="sub">連続 ${activityStreak()}日</span></h2>
+    <div class="sq14">${sq}</div>
+    <div class="small muted" style="margin-bottom:10px">直近14日（光っている日＝最低ラインクリア）</div>
+    <form id="metricsForm">
+      ${W().metrics.map((m) => `<div class="mset"><input name="n_${m.id}" value="${esc(m.name)}" aria-label="項目名"><input type="number" min="0" name="v_${m.id}" value="${m.min}" inputmode="numeric" aria-label="最低ライン"><button type="button" class="linkbtn" data-act="delmetric" data-id="${m.id}">削除</button></div>`).join('')}
+      <div class="row" style="margin-top:8px"><button type="button" class="ghost" data-act="addmetric">＋ 項目を追加</button><span class="spacer"></span><button class="primary">保存</button></div>
+    </form>
+    <div class="small muted" style="margin-top:6px">最低ラインは「調子が悪い日でもできる量」に固定する。0にすると記録だけの項目になります</div>
+  </section>`;
+}
+
+/* ----- 私の基準 ----- */
+function principlesCard() {
+  const n = parsePrinciples(W().principles).length;
+  return `<section class="card">
+    <h2>🧭 私の基準 <span class="sub">${n ? `${n}項目` : ''}</span></h2>
+    <div class="small muted" style="margin-bottom:8px">考え方・判断基準・行動基準をそのまま貼り付けてください。箇条書きの1行ずつが「今日の判断基準」として毎日1つ表示されます。<b>この内容はこの端末の中だけに保存され、外部には送信されません。</b></div>
+    <form id="principlesForm">
+      <textarea name="p" rows="8" placeholder="・迷ったら〜で決める&#10;・毎日〜だけは必ずやる">${esc(W().principles)}</textarea>
+      <label class="rq">目標を変えるときに伝える相手（任意）<input name="mentor" value="${esc(W().mentor)}" placeholder="例：上司・メンターの名前" autocomplete="off"></label>
+      <button class="primary" style="width:100%;margin-top:8px">保存</button>
+    </form>
+  </section>`;
+}
+
+/* ----- Notion用コピー ----- */
+function dayMarkdown() {
+  const k = todayKey(), d = new Date();
+  const L = [`## ${k}（${WD[d.getDay()]}）`];
+  const ms = W().metrics;
+  if (ms.length) L.push(`- 活動量：${ms.map((m) => `${m.name} ${actOn(k, m)}${m.min ? `/${m.min}` : ''}`).join('・')}（最低ライン：${activityMetOn(k) ? 'クリア' : '未達'}）`);
+  const hs = activeHabits().filter((h) => isSched(h, d));
+  if (hs.length) L.push(`- 習慣：${hs.map((h) => `${h.name}${logOf(h, k) ? '✔' : '－'}`).join('・')}`);
+  const rs = activeRoutines().filter((r) => isSched(r, d));
+  if (rs.length) L.push(`- ルーティーン：${rs.map((r) => `${r.name}${routineDone(r, k) ? '✔' : '－'}`).join('・')}`);
+  W().meetings.filter((m) => m.date === k).forEach((m) => L.push(`- 面談：${m.who || '（名前なし）'}（${m.checks.customer ? '守れた' : '要ふりかえり'}・チェック${m.score}%）${m.note ? ` メモ：${m.note}` : ''}`));
+  const done = S.todos.filter((t) => t.done && t.doneAt === k);
+  if (done.length) L.push(`- 完了：${done.map((t) => t.text).join('、')}`);
+  const ins = S.todos.filter((t) => (t.kind === 'insight' || t.kind === 'regret') && t.createdAt === k);
+  if (ins.length) L.push(`- 気づき・悔しい→行動：${ins.map((t) => `${t.text}${t.done ? '（実行済み）' : ''}`).join('、')}`);
+  const j = S.journal[k];
+  if (j && j.text) L.push(`- 日誌：${j.text}`);
+  L.push(`- 🔥 連続 ${dayStreak()}日 ／ 最低ライン連続 ${activityStreak()}日`);
+  return L.join('\n');
+}
+async function copyDay() {
+  const txt = dayMarkdown();
+  try { await navigator.clipboard.writeText(txt); }
+  catch (e) {
+    const ta = document.createElement('textarea'); ta.value = txt; document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); } catch (err) { /* noop */ }
+    ta.remove();
+  }
+  toast('📋 今日の記録をコピーしました。Notionに貼り付けてください');
+}
+function notionCard() {
+  return `<section class="card">
+    <h2>📋 Notionに記録</h2>
+    <div class="small muted" style="margin-bottom:8px">今日の活動量・習慣・面談・気づき・日誌をまとめてコピーします。Notionのページにそのまま貼り付けてください。</div>
+    <button class="ghost" data-act="copyday" style="width:100%">📋 今日の記録をコピー</button>
+  </section>`;
+}
+
+function renderWork() {
+  return `${goalCard()}${meetingCard()}${followCard()}${abcCard()}${reviewCard()}${metricsCard()}${principlesCard()}${notionCard()}`;
+}
+function openForm(html) { $('#formBody').innerHTML = html; $('#formDialog').showModal(); }
 
 /* ---------- routines（毎日のルーティーン） ---------- */
 const ROUTINE_TEMPLATES = [
@@ -441,7 +853,10 @@ function toggleHabit(id, type = 'full') {
 function addTodo(text) {
   text = text.trim();
   if (!text) return;
-  S.todos.push({ id: uid(), text, frog: false, done: false, doneAt: null, createdAt: todayKey() });
+  const t = { id: uid(), text, frog: false, done: false, doneAt: null, createdAt: todayKey(), kind: todoMode, due: null, date: null };
+  if (todoMode === 'insight') { t.due = Date.now() + 86400000; toast('💡 24時間以内に行動へ。期限を過ぎると赤く表示されます'); }
+  if (todoMode === 'regret') { const e = new Date(); e.setHours(23, 59, 0, 0); t.due = e.getTime(); toast('😤 「悔しい」で終わらせない。今日中に一つ動こう'); }
+  S.todos.push(t);
   save(); render();
   const input = $('#todoInput'); if (input) input.focus();
 }
@@ -527,6 +942,11 @@ function banners() {
   if (S.ticketNote && S.ticketNote.date === t) {
     out += `<div class="banner warn">🛡️ シールドが${S.ticketNote.n}枚発動。🔥連続記録は守られた。今日クリアしてつなげよう。</div>`;
   }
+  const od = overdueCount();
+  if (od) out += `<div class="banner warn">⚠️ <b>24時間ルール：</b>期限切れが${od}件。今すぐ1つ動こう。</div>`;
+  if ((d.getDay() === 0 || d.getDay() === 1) && !W().reviews[reviewKey()]) {
+    out += '<div class="banner">🗓️ <b>週1ふりかえりの日。</b> <button class="linkbtn" data-act="gotowork" style="padding:0">仕事タブで今週をふりかえる →</button></div>';
+  }
   if (S.welcomeBack === t) out += '<div class="banner">🔄 <b>おかえり！</b> 戻ってきた時点で勝ち。今日は最低ラインを1つだけクリアしよう。</div>';
   else if (d.getDate() === 1) out += '<div class="banner">🗓️ <b>新しい月！</b> カレンダーが新しいページに。最初の1マスを埋めにいこう。</div>';
   else if (d.getDay() === 1 && weekWins(-1) > 0) out += '<div class="banner">📈 <b>新しい週！</b> <button class="linkbtn" data-act="gotolog" style="padding:0">先週のグラフを見る →</button></div>';
@@ -607,9 +1027,10 @@ function habitRow(h) {
 
 function todoRow(t) {
   const age = !t.done && t.createdAt < todayKey() ? ` <span class="small muted">${diffDays(t.createdAt, todayKey())}日経過</span>` : '';
-  return `<div class="todo ${t.done ? 'done' : ''} ${t.frog && !t.done ? 'star-on' : ''}">
+  const over = !t.done && t.due && t.due < Date.now();
+  return `<div class="todo ${t.done ? 'done' : ''} ${t.frog && !t.done ? 'star-on' : ''} ${over ? 'over' : ''}">
     <button class="check" data-act="todo" data-id="${t.id}" aria-label="完了">${t.done ? '✔' : ''}</button>
-    <span class="txt">${esc(t.text)}${age}</span>
+    <span class="txt">${TODO_KIND[t.kind] ? `${TODO_KIND[t.kind]} ` : ''}${esc(t.text)}${age} ${dueLabel(t)}</span>
     ${t.done ? '' : `<button class="star ${t.frog ? 'on' : ''}" data-act="star" data-id="${t.id}" title="最重要にする">${t.frog ? '★' : '☆'}</button>`}
     <button class="del" data-act="deltodo" data-id="${t.id}" aria-label="削除">✕</button>
   </div>`;
@@ -621,7 +1042,9 @@ function renderToday() {
   const todayHabits = activeHabits().filter((h) => isSched(h, d));
   const rest = activeHabits().filter((h) => !isSched(h, d));
   const p = todayProgress(), rem = p.sched - p.done;
-  const open = S.todos.filter((t) => !t.done).sort((a, b) => (b.frog - a.frog) || (a.createdAt < b.createdAt ? -1 : 1));
+  const now = Date.now();
+  const open = S.todos.filter((t) => !t.done && (!t.date || t.date <= k)).sort((a, b) =>
+    ((b.due && b.due < now) - (a.due && a.due < now)) || ((a.due || Infinity) - (b.due || Infinity)) || (b.frog - a.frog) || (a.createdAt < b.createdAt ? -1 : 1));
   const doneT = S.todos.filter((t) => t.done && t.doneAt === k);
   const msg = p.sched === 0 ? '今日は習慣オフの日'
     : rem === 0 ? '⭐ パーフェクト！今日は完全勝利'
@@ -630,7 +1053,9 @@ function renderToday() {
 
   return `
   ${banners()}
+  ${compassCard()}
   ${heroCard()}
+  ${activityCard()}
   ${routinesCard()}
 
   <section class="card">
@@ -647,8 +1072,13 @@ function renderToday() {
 
   <section class="card">
     <h2>✅ やること <span class="sub">${doneT.length ? `今日 ${doneT.length}件 完了` : ''}</span></h2>
+    <div class="modes">
+      <button type="button" data-act="todomode" data-m="" class="${todoMode === '' ? 'on' : ''}">✅ ふつう</button>
+      <button type="button" data-act="todomode" data-m="insight" class="${todoMode === 'insight' ? 'on' : ''}">💡 気づき → 24時間以内</button>
+      <button type="button" data-act="todomode" data-m="regret" class="${todoMode === 'regret' ? 'on' : ''}">😤 悔しい → 今日中</button>
+    </div>
     <form class="todo-add" id="todoForm">
-      <input id="todoInput" placeholder="やることを追加…" autocomplete="off">
+      <input id="todoInput" placeholder="${todoMode === 'insight' ? '気づいたこと → どう動く？' : todoMode === 'regret' ? '悔しかったこと → 今日やる一つの行動は？' : 'やることを追加…'}" autocomplete="off">
       <button class="primary" type="submit">追加</button>
     </form>
     ${open.length >= 2 && !open.some((t) => t.frog) ? '<div class="small muted" style="margin-bottom:4px">☆で「最重要」に指定 → 一番上に固定</div>' : ''}
@@ -911,6 +1341,12 @@ const PSY = [
   ['🏆 自己ベストまであと◯日（目標勾配効果）', 'ゴールが近づくほど人は加速します。自己ベストまでの距離を常に表示しています。'],
   ['⭕ 今日の進捗バー（ツァイガルニク効果）', '人は未完了のものを完了させたくなります。「残り1つでパーフェクト」で最後のひと押しを。'],
   ['🛡️ シールド（What-the-hell 効果の防止）', '1回途切れると「もういいや」とやめてしまいがち。7日連続ごとのシールドが休んだ日を守ります。'],
+  ['📊 毎日の最低ライン（外発的な刺激に頼らない）', '人に会った直後だけやる気が上がり、数日で元に戻るのは自然なこと。調子が悪い日でもできる量を固定し、毎日記録することで「気分」ではなく「仕組み」で動けるようになります。'],
+  ['⚡ 24時間ルール（実行意図・ツァイガルニク効果）', '気づきは時間がたつほど行動に変わらなくなります。期限と残り時間を見えるようにすると「やりかけ」が気になって動きやすくなります。「悔しい」は感情が強いうちに一つの行動へ。'],
+  ['🤝 面談のあとに「守れたか」を記録（自己モニタリング）', '自分の行動を記録するだけで、行動は基準に近づいていきます。自分の印象ではなく、相手の結果で自分を評価する習慣をつくります。'],
+  ['🔒 目標の定義を勝手に変えない（コミットメントと一貫性）', '目標を下げたくなったときに理由を書き、誰かに伝えるというひと手間が、「なんとなくの妥協」を防ぎます（チャルディーニ）。'],
+  ['🧭 今日の判断基準（プライミング）', '朝に自分の基準を一つ目にすると、その日の判断がその基準に引っぱられやすくなります。'],
+  ['🗓️ 週1ふりかえり（内省）', '経験は、ふりかえって言葉にしたときに学びになります（コルブの経験学習）。完全自責で「自分にできたこと」を探すと、次の行動が具体的になります。'],
   ['🔁 ルーティーン（ハビット・スタッキング）', '「Aが終わったらB」と行動を鎖のようにつなげると、1つ目を始めるだけで残りが自然に続きます（ジェームズ・クリア）。決まった手順は「何をするか考える」負担（決断疲れ）も減らします。'],
   ['⚡ 最低ライン（タイニー・ハビット）', 'ハードルを下げて「ゼロの日」をなくすのが継続の鍵です（BJ・フォッグ）。'],
   ['🕖 いつやる？（If-Thenプランニング）', '「〜したら、〜する」と決めておくと実行率が大きく上がります（ゴルヴィツァー）。'],
@@ -948,7 +1384,7 @@ function renderSettings() {
 function render() {
   renderTop();
   hideChartHover();
-  $('#view').innerHTML = tab === 'log' ? renderLog() : renderToday();
+  $('#view').innerHTML = tab === 'log' ? renderLog() : tab === 'work' ? renderWork() : renderToday();
   document.querySelectorAll('#tabbar button').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
   if ($('#settingsDialog').open) $('#settingsBody').innerHTML = renderSettings();
 }
@@ -1020,6 +1456,44 @@ document.addEventListener('click', (e) => {
     case 'addroutine': openRoutine(null, null); break;
     case 'editroutine': { const r = S.routines.find((x) => x.id === id); if (r) openRoutine(r); break; }
     case 'rtpl': { const t = ROUTINE_TEMPLATES[Number(b.dataset.i)]; rfe('emoji').value = t.emoji; rfe('name').value = t.name; rfe('time').value = t.time; rfe('steps').value = t.steps.join('\n'); break; }
+    // 仕事
+    case 'gotowork': tab = 'work'; render(); window.scrollTo({ top: 0 }); break;
+    case 'compassnext': compassOffset++; render(); break;
+    case 'actplus': bumpActivity(id, 1); break;
+    case 'actminus': bumpActivity(id, -1); break;
+    case 'todomode': todoMode = b.dataset.m; render(); { const i = $('#todoInput'); if (i) i.focus(); } break;
+    case 'editgoal': openGoal(); break;
+    case 'cond': {
+      const c = W().goal.conditions.find((x) => x.id === id);
+      if (c) {
+        c.done = !c.done;
+        if (c.done) { toast(`✔ 条件クリア：${esc(c.text)}`); confetti(80); if (W().goal.conditions.every((x) => x.done)) celebrate('🏆', '達成条件をすべてクリア', 'ここまで積み上げてきた自分を誇っていい。'); }
+        save(); render();
+      }
+      break;
+    }
+    case 'addmeeting': openMeeting(); break;
+    case 'closeform': $('#formDialog').close(); break;
+    case 'delcontract':
+      if (confirm('この契約の記録と、未完了のフォロー予定を削除しますか？')) {
+        W().contracts = W().contracts.filter((c) => c.id !== id);
+        S.todos = S.todos.filter((t) => !(t.ref === id && !t.done));
+        save(); render();
+      }
+      break;
+    case 'abc': {
+      const i = Number(b.dataset.i), a = W().abc;
+      a.checked = a.checked.includes(i) ? a.checked.filter((x) => x !== i) : [...a.checked, i];
+      if (a.checked.length === ABC_STEPS.length) toast('🔺 セットアップ完了。いい面談に');
+      save(); render();
+      break;
+    }
+    case 'abcreset': W().abc.checked = []; save(); render(); break;
+    case 'addmetric': W().metrics.push({ id: uid(), name: '新しい項目', min: 1 }); save(); render(); break;
+    case 'delmetric':
+      if (confirm('この項目を削除しますか？（これまでの記録も数えられなくなります）')) { W().metrics = W().metrics.filter((m) => m.id !== id); save(); render(); }
+      break;
+    case 'copyday': copyDay(); break;
     case 'rrestore': { const r = S.routines.find((x) => x.id === id); if (r) { r.archived = false; save(); render(); toast(`${esc(r.emoji)} 再開した`); } break; }
     case 'ropen': if (openRoutines.has(id)) openRoutines.delete(id); else openRoutines.add(id); render(); break;
     case 'todo': toggleTodo(id); break;
@@ -1062,6 +1536,31 @@ document.addEventListener('click', (e) => {
 document.addEventListener('submit', (e) => {
   const id = e.target.id;
   if (id === 'todoForm') { e.preventDefault(); addTodo($('#todoInput').value); }
+  else if (id === 'goalForm') { if (!saveGoal(e.target)) e.preventDefault(); }
+  else if (id === 'meetingForm') { saveMeeting(e.target); }
+  else if (id === 'contractForm') { e.preventDefault(); saveContract(e.target); }
+  else if (id === 'reviewForm') {
+    e.preventDefault();
+    const a = REVIEW_QS.map((_, i) => e.target.elements.namedItem(`q${i}`).value.trim());
+    if (!a.some(Boolean)) { toast('1つだけでも書いてみよう'); return; }
+    const first = !W().reviews[reviewKey()];
+    W().reviews[reviewKey()] = { a, savedAt: todayKey() };
+    if (first) { celebrate('🗓️', '週1ふりかえり完了', '立ち止まって考えた時間が、来週の行動を変える。'); } else toast('保存しました');
+    save(); render();
+  } else if (id === 'metricsForm') {
+    e.preventDefault();
+    W().metrics.forEach((m) => {
+      m.name = e.target.elements.namedItem(`n_${m.id}`).value.trim() || m.name;
+      m.min = Math.max(0, Number(e.target.elements.namedItem(`v_${m.id}`).value) || 0);
+    });
+    save(); render(); toast('📊 最低ラインを保存しました。毎日このラインだけは守る');
+  } else if (id === 'principlesForm') {
+    e.preventDefault();
+    W().principles = e.target.elements.namedItem('p').value;
+    W().mentor = e.target.elements.namedItem('mentor').value.trim();
+    const n = parsePrinciples(W().principles).length;
+    save(); render(); toast(n ? `🧭 ${n}項目を登録。毎日1つ「今日の判断基準」に表示します` : '保存しました');
+  }
   else if (id === 'onbCustom') {
     e.preventDefault();
     const name = e.target.elements.namedItem('t').value.trim();
@@ -1079,6 +1578,14 @@ document.addEventListener('change', (e) => {
   if (e.target.id === 'journalAt') {
     S.settings.journalAt = e.target.value; save();
     toast(e.target.value ? `📝 ${e.target.value} に通知します` : 'ふりかえり通知をオフにしました');
+    return;
+  }
+  if (e.target.id === 'incomeInput') {
+    const g = W().goal, ym = todayKey().slice(0, 7), v = Math.max(0, Number(e.target.value) || 0);
+    const before = Number(g.income[ym] || 0);
+    g.income[ym] = v;
+    if (g.incomeTarget && v >= g.incomeTarget && before < g.incomeTarget) celebrate('💴', '今月の収入、基準クリア', '決めた基準を自分の力で超えた。');
+    save(); render();
     return;
   }
   if (e.target.id !== 'importFile') return;
@@ -1327,7 +1834,7 @@ function handleParams(qs) {
     tab = 'today';
     if (h && !logOf(h, todayKey())) toggleHabit(id, type); else render();
   } else if (p.get('tab')) {
-    tab = ['log', 'reflect', 'growth'].includes(p.get('tab')) ? 'log' : 'today';
+    tab = ['log', 'reflect', 'growth'].includes(p.get('tab')) ? 'log' : p.get('tab') === 'work' ? 'work' : 'today';
     render();
   }
 }
