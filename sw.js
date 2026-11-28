@@ -4,7 +4,7 @@
  *  - リマインダー通知（アプリからの合図 / Periodic Background Sync）
  *  - 通知のボタンから「やった！」「2分だけ」を記録
  * ========================================================= */
-const VERSION = 'tsuzuku-shell-v6';
+const VERSION = 'tsuzuku-shell-v7';
 const DATA = 'tsuzuku-data';
 const SHELL = [
   './', './index.html', './styles.css', './app.js', './manifest.webmanifest',

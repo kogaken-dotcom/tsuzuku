@@ -123,7 +123,14 @@ function defaultWork() {
     contracts: [],  // { id, date, who }
     abc: { checked: [] },
     reviews: {},    // { 週の月曜日: { a:[...], savedAt } }
-    goal: { contractTarget: 0, contractDeadline: '', contractStart: dkey(), conditions: [], deadlineDate: '', deadlineLabel: '', incomeTarget: 0, income: {}, history: [] },
+    channels: ['交流会', '紹介', 'マッチングアプリ', 'SNS', '既存のお客様', 'その他'], // 出会ったフィールド
+    hypotheses: [], // { id, text, metric, until, status:'testing'|'hit'|'miss', result, createdAt }
+    reports: {},    // 日報 { 'YYYY-MM-DD': { a:[...], savedAt, sentAt } }
+    reportTo: '',   // 日報の提出先
+    inputs: [],     // 学び { id, date, text }
+    outputs: [],    // アウトプット { id, date, type, title, people }
+    seminar: { date: '', title: '' }, // 次のセミナー・勉強会
+    goal: { contractTarget: 0, contractDeadline: '', contractStart: dkey(), monthlyTarget: 0, ksf: [], conditions: [], deadlineDate: '', deadlineLabel: '', incomeTarget: 0, income: {}, history: [] },
   };
 }
 const W = () => S.work;
@@ -156,6 +163,20 @@ function parsePrinciples(text) {
 
 /* ----- 今日の画面：判断基準 ----- */
 let compassOffset = 0;
+// 経営者として自分に問いかける質問（毎日1つ）
+const MINDSET_QS = [
+  'もし明日、看板と商品が消えても、お客様と自分のスキルで来月稼げるか？',
+  '「株式会社自分」の経営者として、今日なにを決める？',
+  '仮説を持たない実行は、ただの浪費。今日の行動の仮説は？',
+  '2割できたら、まずやる。完璧を待っていないか？',
+  '受けただけの研修は、受けていないのと同じ。最近学んだことを今すぐ話せるか？',
+  '自分ひとりで完結する予定（勉強・振り返り・連絡）も、時間を決めて入れたか？',
+  '分からないことを、先を走っている人に聞いたか？',
+  '今日の行動は、自分でコントロールできるKPIに沿っているか？',
+  '指示を待っていないか？ 自分で考えて、自分で動いているか？',
+  '1週間前の自分より、今日の自分は楽にできているか？',
+];
+const mindsetQ = () => MINDSET_QS[(hashStr(`q${todayKey()}`) + compassOffset) % MINDSET_QS.length];
 function goalStrip() {
   const g = W().goal, parts = [];
   if (g.contractTarget) parts.push(`🎯 契約 <b>${contractCount()}</b>/${g.contractTarget}${g.contractDeadline ? `（残り${daysLeft(g.contractDeadline)}日）` : ''}`);
@@ -169,6 +190,7 @@ function compassCard() {
       <div class="c-top"><span class="c-label">🧭 今日の判断基準</span></div>
       <div class="small muted">自分の「考え方・行動基準」を登録すると、毎日ここに1つずつ表示されます。</div>
       <button class="ghost" data-act="gotowork" style="margin-top:8px">私の基準を登録する</button>
+      <div class="mq">💭 今日の問い：${esc(mindsetQ())}</div>
       ${goalStrip()}
     </section>`;
   }
@@ -176,6 +198,7 @@ function compassCard() {
   return `<section class="card compass">
     <div class="c-top"><span class="c-label">🧭 今日の判断基準</span><button class="linkbtn" data-act="compassnext">別のを見る</button></div>
     <div class="principle">${esc(ps[i])}</div>
+    <div class="mq">💭 今日の問い：${esc(mindsetQ())}</div>
     ${goalStrip()}
   </section>`;
 }
@@ -216,7 +239,7 @@ function bumpActivity(id, d, silent) {
 
 /* ----- 24時間ルール ----- */
 let todoMode = '';
-const TODO_KIND = { insight: '💡', regret: '😤', follow: '📞', meet: '📅' };
+const TODO_KIND = { insight: '💡', regret: '😤', follow: '📞', meet: '📅', output: '🎤' };
 function dueLabel(t) {
   if (!t.due || t.done) return '';
   const ms = t.due - Date.now();
@@ -229,7 +252,7 @@ const overdueCount = () => S.todos.filter((t) => !t.done && t.due && t.due < Dat
 /* ----- 目標と期限 ----- */
 function goalCard() {
   const g = W().goal;
-  const set = g.contractTarget || g.deadlineDate || g.incomeTarget || g.conditions.length;
+  const set = g.contractTarget || g.deadlineDate || g.incomeTarget || g.conditions.length || g.monthlyTarget || (g.ksf || []).length;
   if (!set) {
     return `<section class="card"><h2>🎯 目標と期限</h2>
       <div class="empty small">契約目標・達成条件・期限・収入の基準を登録すると、毎日の画面で確認できます。</div>
@@ -246,6 +269,12 @@ function goalCard() {
       <div class="g-bar"><i style="width:${Math.min(100, (cc / g.contractTarget) * 100)}%"></i></div>
       <div class="small muted">${left !== null ? `期限まで残り <b>${left}</b>日` : ''}${cc >= g.contractTarget ? ' ・ 🎉 達成！' : pace ? ` ・ 必要ペース 週${pace}件` : ''}</div>
     </div>` : ''}
+    ${g.monthlyTarget ? (() => { const mc = W().contracts.filter((c) => c.date.startsWith(todayKey().slice(0, 7))).length;
+      return `<div class="g-block"><div class="g-row"><span>今月の契約</span><span class="g-big">${mc}<small> / ${g.monthlyTarget}</small></span></div>
+        <div class="g-bar"><i style="width:${Math.min(100, (mc / g.monthlyTarget) * 100)}%"></i></div></div>`; })() : ''}
+    ${(g.ksf || []).length ? `<div class="g-block"><div class="g-sub">🔑 成功の鍵（KSF）</div>
+      ${g.ksf.map((x) => `<div class="ksf">${esc(x)}</div>`).join('')}
+      <div class="small muted" style="margin-top:4px">→ 毎日の行動（KPI）は「📊 活動量」で記録。KPIは自分で100%コントロールできる</div></div>` : ''}
     ${g.conditions.length ? `<div class="g-block">
       <div class="g-sub">達成条件 ${g.conditions.filter((c) => c.done).length} / ${g.conditions.length}</div>
       ${g.conditions.map((c) => `<button class="cond ${c.done ? 'on' : ''}" data-act="cond" data-id="${c.id}"><span class="sc">${c.done ? '✔' : ''}</span><span>${esc(c.text)}</span></button>`).join('')}
@@ -271,6 +300,10 @@ function openGoal() {
     <div class="row"><label class="grow">契約目標（件）<input type="number" name="contractTarget" min="0" value="${g.contractTarget || ''}" inputmode="numeric"></label>
       <label class="grow">期限<input type="date" name="contractDeadline" value="${g.contractDeadline}"></label></div>
     <label>契約を数え始める日<input type="date" name="contractStart" value="${g.contractStart}"><small>この日以降に「契約後フォロー」で記録した契約を数えます</small></label>
+    <label>今月の契約目標（件）<input type="number" name="monthlyTarget" min="0" value="${g.monthlyTarget || ''}" inputmode="numeric"><small>年間（期限）の目標から逆算した、今月の目標</small></label>
+    <label>🔑 成功の鍵（KSF）：目標達成に欠かせないこと（3〜5個・1行に1つ）
+      <textarea name="ksf" rows="3" placeholder="例：紹介を途切れさせない&#10;ライフプランで潜在的な不安を深く聞き出す&#10;契約後のフォローで信頼関係を築く">${esc((g.ksf || []).join('\n'))}</textarea>
+      <small>KSFを実行するための「毎日の行動（KPI）」は、仕事タブの「活動量の最低ライン」で決めます</small></label>
     <label>達成条件（1行に1つ）<textarea name="conditions" rows="3" placeholder="例：資格試験に合格">${esc(g.conditions.map((c) => c.text).join('\n'))}</textarea></label>
     <div class="row"><label class="grow">期限の名前<input name="deadlineLabel" value="${esc(g.deadlineLabel)}" placeholder="例：判断の期限"></label>
       <label class="grow">期限日<input type="date" name="deadlineDate" value="${g.deadlineDate}"></label></div>
@@ -300,6 +333,8 @@ function saveGoal(f) {
   }
   const lines = v('conditions').split('\n').map((s) => s.trim()).filter(Boolean);
   g.conditions = lines.map((text) => g.conditions.find((c) => c.text === text) || { id: uid(), text, done: false });
+  g.ksf = v('ksf').split('\n').map((s) => s.trim()).filter(Boolean).slice(0, 7);
+  g.monthlyTarget = Number(v('monthlyTarget')) || 0;
   Object.assign(g, next);
   save(); render(); toast('🎯 目標を保存しました');
   return true;
@@ -315,6 +350,27 @@ const MEET_CHECKS = [
   ['deep', '縦に深掘る質問をした', false],
   ['noscare', '不安をあおらず、最後は背中を押した', false],
 ];
+const MEET_RESULTS = [['meet', '面談のみ'], ['appo', '次のアポ獲得'], ['offer', '提案（オファー）'], ['contract', '契約']];
+// フィールドごとの数字管理：どこで出会った人が、どこまで進んでいるか
+function channelTable() {
+  const by = {};
+  W().meetings.forEach((m) => {
+    const c = m.channel || '未設定';
+    by[c] = by[c] || { n: 0, offer: 0, contract: 0 };
+    by[c].n++;
+    if (m.result === 'offer' || m.result === 'contract') by[c].offer++;
+    if (m.result === 'contract') by[c].contract++;
+  });
+  const rows = Object.entries(by).sort((a, b) => b[1].n - a[1].n);
+  if (!rows.length) return '';
+  const best = Math.max(...rows.map(([, v]) => (v.n ? v.contract / v.n : 0)));
+  return `<div class="g-sub" style="margin-top:12px">フィールド別の数字（どこで出会った人が成約しやすいか）</div>
+    <table class="ctab"><thead><tr><th>フィールド</th><th>面談</th><th>提案</th><th>契約</th><th>成約率</th></tr></thead><tbody>
+    ${rows.map(([c, v]) => { const r = v.n ? Math.round((v.contract / v.n) * 100) : 0;
+      return `<tr class="${v.n && v.contract / v.n === best && best > 0 ? 'top' : ''}"><td>${esc(c)}</td><td>${v.n}</td><td>${v.offer}</td><td>${v.contract}</td><td><div class="rbar"><i style="width:${r}%"></i><span>${r}%</span></div></td></tr>`; }).join('')}
+    </tbody></table>
+    <div class="small muted">件数が少ないうちは参考程度に。数字をもとに「来月どのフィールドに時間を使うか」を決める</div>`;
+}
 function meetingCard() {
   const ms = W().meetings.slice().sort((a, b) => (a.date < b.date ? 1 : -1));
   const n = ms.length, kept = ms.filter((m) => m.checks.customer).length;
@@ -324,8 +380,9 @@ function meetingCard() {
     <div class="small muted" style="margin-bottom:8px">自分の印象ではなく、お客様の結果に集中できたかを毎回記録する</div>
     ${n ? `<div class="mbars">${last10.map((m) => `<div class="mb" title="${md(m.date)} ${esc(m.who)}：${m.score}%"><div class="mb-col"><i style="height:${Math.max(6, m.score)}%" class="${m.checks.customer ? '' : 'warn'}"></i></div><span>${md(m.date)}</span></div>`).join('')}</div>
       <div class="small muted" style="margin:4px 0 8px">棒＝チェックの達成率（直近10件）・🛡️ 守れた／⚠️ 守れなかった</div>` : ''}
-    ${ms.slice(0, 5).map((m) => `<div class="mrow"><span>${m.checks.customer ? '🛡️' : '⚠️'} ${md(m.date)} ${esc(m.who || '（名前なし）')}${m.first ? ' ・初回' : ''}</span><span class="small muted">${m.score}%</span></div>`).join('')}
-    <button class="primary" data-act="addmeeting" style="width:100%;margin-top:10px">＋ 面談を記録</button>
+    ${ms.slice(0, 5).map((m) => `<div class="mrow"><span>${m.checks.customer ? '🛡️' : '⚠️'} ${md(m.date)} ${esc(m.who || '（名前なし）')}${m.first ? ' ・初回' : ''}${m.result ? ` ・${(MEET_RESULTS.find((x) => x[0] === m.result) || [, ''])[1]}` : ''}</span><span class="small muted">${m.score}%</span></div>`).join('')}
+    ${channelTable()}
+    <button class="primary" data-act="addmeeting" style="width:100%;margin-top:10px">＋ 面談を記録（アポ後すぐ）</button>
   </section>`;
 }
 function openMeeting() {
@@ -333,11 +390,16 @@ function openMeeting() {
     <h2>🤝 面談を記録</h2>
     <div class="row"><label class="grow">相手（イニシャル推奨）<input name="who" placeholder="例：Aさん" autocomplete="off"></label>
       <label>日付<input type="date" name="date" value="${todayKey()}"></label></div>
+    <div class="row"><label class="grow">出会ったフィールド<select name="channel">${W().channels.map((c) => `<option>${esc(c)}</option>`).join('')}</select></label>
+      <label class="grow">結果<select name="result">${MEET_RESULTS.map(([v, l]) => `<option value="${v}">${l}</option>`).join('')}</select></label></div>
     <label class="inline"><input type="checkbox" name="first"> 初回面談</label>
+    <label>🧪 この面談で試したこと（仮説）<input name="hypo" placeholder="例：最初に「入っているもの」を聞いてから数字で深掘る" autocomplete="off"></label>
     <div class="g-sub" style="margin-top:6px">ふりかえりチェック</div>
     ${MEET_CHECKS.map(([key, label, firstOnly]) => `<label class="inline ${firstOnly ? 'first-only' : ''}"><input type="checkbox" name="c_${key}"> ${label}${firstOnly ? '（初回）' : ''}</label>`).join('')}
-    <label style="margin-top:8px">📅 次の約束（日時）<input type="datetime-local" name="next"><small>入れると、その日の「やること」に自動で入ります</small></label>
-    <label>メモ（気づき・次回への改善）<textarea name="note" rows="2"></textarea><small>改善点を書くと、24時間ルールの「やること」になります</small></label>
+    <label class="inline"><input type="checkbox" name="fb"> 先輩・マネージャーからフィードバックをもらった</label>
+    <label style="margin-top:8px">👍 良かった点<textarea name="good" rows="2"></textarea></label>
+    <label>🔧 悪かった点・次回どうする<textarea name="note" rows="2"></textarea><small>書くと、24時間ルールの「やること」になります</small></label>
+    <label>📅 次の約束（日時）<input type="datetime-local" name="next"><small>入れると、その日の「やること」に自動で入ります</small></label>
     <div class="dialog-actions"><span class="spacer"></span><button type="button" class="ghost" data-act="closeform">キャンセル</button><button class="primary">保存</button></div>
   </form>`);
 }
@@ -350,8 +412,13 @@ function saveMeeting(f) {
     if (firstOnly && !first) return;
     checks[key] = v(`c_${key}`).checked; total++; if (checks[key]) ok++;
   });
-  const m = { id: uid(), date: v('date').value || todayKey(), who: v('who').value.trim(), first, checks, score: Math.round((ok / total) * 100), next: v('next').value, note: v('note').value.trim() };
+  const m = {
+    id: uid(), date: v('date').value || todayKey(), who: v('who').value.trim(), first, checks, score: Math.round((ok / total) * 100),
+    next: v('next').value, note: v('note').value.trim(), good: v('good').value.trim(), hypo: v('hypo').value.trim(),
+    channel: v('channel').value, result: v('result').value, fb: v('fb').checked,
+  };
   W().meetings.push(m);
+  if (m.result === 'contract') addContract(m.who || '契約者', m.date, true);
   if (m.next) {
     const [nd, nt] = m.next.split('T');
     S.todos.push({ id: uid(), text: `${m.who || '次回'}との面談 ${md(nd)} ${nt || ''}`.trim(), frog: false, done: false, doneAt: null, createdAt: todayKey(), kind: 'meet', date: nd, due: null });
@@ -383,8 +450,9 @@ function followCard() {
   </section>`;
 }
 function saveContract(f) {
-  const who = f.elements.namedItem('who').value.trim() || '契約者';
-  const date = f.elements.namedItem('date').value || todayKey();
+  addContract(f.elements.namedItem('who').value.trim() || '契約者', f.elements.namedItem('date').value || todayKey(), false);
+}
+function addContract(who, date, fromMeeting) {
   const c = { id: uid(), date, who };
   W().contracts.push(c);
   FOLLOW_STEPS.forEach(([n, label]) => {
@@ -394,7 +462,7 @@ function saveContract(f) {
   if (g.contractTarget) celebrate('🤝', `契約 ${contractCount()} / ${g.contractTarget}`, 'フォローの予定（翌日・1週間後・1か月後）を「やること」に入れました。<br>ゴールは「この人から紹介をもらうこと」。');
   else toast('🤝 契約を記録。フォローの予定を入れました');
   confetti(120);
-  save(); render();
+  if (!fromMeeting) { save(); render(); }
 }
 
 /* ----- ABCセットアップ ----- */
@@ -449,7 +517,8 @@ function metricsCard() {
     sq += `<i class="${activityMetOn(dk) ? 'on' : ''} ${dk === k ? 'today' : ''}" title="${md(dk)}"></i>`;
   }
   return `<section class="card">
-    <h2>📊 活動量の最低ライン <span class="sub">連続 ${activityStreak()}日</span></h2>
+    <h2>📊 KPI：毎日の最低ライン <span class="sub">連続 ${activityStreak()}日</span></h2>
+    <div class="small muted" style="margin-bottom:8px">成約数や売上はお客様次第。でも連絡・アポ・面談の数は、自分で100%コントロールできる。ここを守れば目標（KGI）は近づく</div>
     <div class="sq14">${sq}</div>
     <div class="small muted" style="margin-bottom:10px">直近14日（光っている日＝最低ラインクリア）</div>
     <form id="metricsForm">
@@ -457,6 +526,16 @@ function metricsCard() {
       <div class="row" style="margin-top:8px"><button type="button" class="ghost" data-act="addmetric">＋ 項目を追加</button><span class="spacer"></span><button class="primary">保存</button></div>
     </form>
     <div class="small muted" style="margin-top:6px">最低ラインは「調子が悪い日でもできる量」に固定する。0にすると記録だけの項目になります</div>
+    <details class="small" style="margin-top:8px"><summary>KPIの決め方（SMARTチェック）</summary>
+      <div class="smart">
+        <div><b>S</b> 具体的か：「意識する」ではなく「何を何件」になっている</div>
+        <div><b>M</b> 測れるか：数字で記録できる</div>
+        <div><b>A</b> 達成できるか：ギリギリ届く量。無謀だと続かない</div>
+        <div><b>R</b> 目標につながるか：成功の鍵（KSF）に関係している</div>
+        <div><b>T</b> 期限があるか：毎日・今週など、いつまでかが明確</div>
+        <div class="muted">項目は3〜5個がおすすめ。多すぎると守れない</div>
+      </div>
+    </details>
   </section>`;
 }
 
@@ -487,6 +566,8 @@ function dayMarkdown() {
   W().meetings.filter((m) => m.date === k).forEach((m) => L.push(`- 面談：${m.who || '（名前なし）'}（${m.checks.customer ? '守れた' : '要ふりかえり'}・チェック${m.score}%）${m.note ? ` メモ：${m.note}` : ''}`));
   const done = S.todos.filter((t) => t.done && t.doneAt === k);
   if (done.length) L.push(`- 完了：${done.map((t) => t.text).join('、')}`);
+  const rep = W().reports[k];
+  if (rep && rep.a) REPORT_QS.forEach((q, i) => { if (rep.a[i]) L.push(`- ${q}：${rep.a[i].replace(/\n/g, ' ')}`); });
   const ins = S.todos.filter((t) => (t.kind === 'insight' || t.kind === 'regret') && t.createdAt === k);
   if (ins.length) L.push(`- 気づき・悔しい→行動：${ins.map((t) => `${t.text}${t.done ? '（実行済み）' : ''}`).join('、')}`);
   const j = S.journal[k];
@@ -512,8 +593,135 @@ function notionCard() {
   </section>`;
 }
 
+/* ----- 仮説と検証（仮説を持たない実行はただの浪費） ----- */
+function hypoCard() {
+  const hs = W().hypotheses;
+  const testing = hs.filter((h) => h.status === 'testing');
+  const done = hs.filter((h) => h.status !== 'testing').slice().reverse();
+  const hit = done.filter((h) => h.status === 'hit').length;
+  return `<section class="card">
+    <h2>🧪 仮説と検証 <span class="sub">${done.length ? `検証済み ${done.length}件（当たり ${hit}）` : ''}</span></h2>
+    <div class="small muted" style="margin-bottom:8px">「なんとなく数をこなす」をやめる。こうしたら → こうなるはず、を決めて数字で確かめる</div>
+    ${testing.map((h) => `<div class="hypo">
+      <div class="h-text">${esc(h.text)}</div>
+      <div class="small muted">📏 ${esc(h.metric || '測るもの未設定')}${h.until ? ` ・ 〜${md(h.until)}（残り${daysLeft(h.until)}日）` : ''}</div>
+      <div class="h-judge"><input id="hr_${h.id}" placeholder="結果（例：10枚中3件アポ）" autocomplete="off">
+        <button class="ghost" data-act="hypohit" data-id="${h.id}">⭕ 当たり</button><button class="ghost" data-act="hypomiss" data-id="${h.id}">❌ 外れ</button></div>
+    </div>`).join('')}
+    <form id="hypoForm" class="hypo-form">
+      <input name="text" placeholder="仮説：例）経営者の会で「保険を卒業させるFP」と名乗ると、アポ率が上がる" autocomplete="off">
+      <div class="row"><input name="metric" placeholder="測るもの：例）名刺交換→アポ率" autocomplete="off"><input type="date" name="until" class="date-in"></div>
+      <button class="primary" style="width:100%">仮説を立てる</button>
+    </form>
+    ${done.length ? `<details class="small" style="margin-top:10px"><summary>検証の記録（${done.length}）</summary>
+      ${done.map((h) => `<div class="entry"><div class="d">${h.status === 'hit' ? '⭕ 当たり' : '❌ 外れ'} ・ ${md(h.doneAt || h.createdAt)}</div><p>${esc(h.text)}<br>→ ${esc(h.result || '（結果メモなし）')}</p></div>`).join('')}
+    </details>` : ''}
+  </section>`;
+}
+
+/* ----- 今日の日報（振り返りの土台。提出先を決めて毎日出す） ----- */
+const REPORT_QS = ['今日の仮説と、やってみた結果は？', '良かった点・悪かった点は？', '明日はどうする？（いつ・何を・何件）'];
+function reportNumbers(k) {
+  const ms = W().meetings.filter((m) => m.date === k);
+  const cnt = (r) => ms.filter((m) => m.result === r).length;
+  const parts = [];
+  if (W().metrics.length) parts.push(W().metrics.map((m) => `${m.name} ${actOn(k, m)}${m.min ? `/${m.min}` : ''}`).join('・'));
+  if (ms.length) parts.push(`面談 ${ms.length}（次アポ ${cnt('appo')}・提案 ${cnt('offer')}・契約 ${cnt('contract')}）・FB ${ms.filter((m) => m.fb).length}回`);
+  return parts;
+}
+function reportText(k) {
+  const r = W().reports[k] || {};
+  const d = parseKey(k);
+  const L = [`【日報】${md(k)}（${WD[d.getDay()]}）`, ...reportNumbers(k).map((x) => `■ ${x}`)];
+  REPORT_QS.forEach((q, i) => { if ((r.a || [])[i]) L.push(`■ ${q}\n${r.a[i]}`); });
+  return L.join('\n');
+}
+function reportStreak() {
+  let s = W().reports[todayKey()] ? 1 : 0;
+  let d = addDays(new Date(), -1);
+  for (let i = 0; i < 3650; i++) { if (W().reports[dkey(d)]) s++; else break; d = addDays(d, -1); }
+  return s;
+}
+function reportCard() {
+  const k = todayKey(), r = W().reports[k] || {};
+  const nums = reportNumbers(k);
+  return `<section class="card report">
+    <h2>📝 今日の日報 <span class="sub">${r.sentAt ? '✔ 提出済み' : r.savedAt ? '保存済み・未提出' : ''}${reportStreak() ? ` ・ 連続${reportStreak()}日` : ''}</span></h2>
+    <div class="small muted" style="margin-bottom:8px">今日の数字は自動で入ります。自分で決めた相手に、決めた時間までに毎日提出する</div>
+    ${nums.length ? `<div class="rnums">${nums.map((x) => `<div>${esc(x)}</div>`).join('')}</div>` : ''}
+    <form id="reportForm">
+      ${REPORT_QS.map((q, i) => `<label class="rq">${q}<textarea name="a${i}" rows="2">${esc((r.a || [])[i] || '')}</textarea></label>`).join('')}
+      <label class="rq">提出先<input name="to" value="${esc(W().reportTo)}" placeholder="例：先輩・マネージャーの名前" autocomplete="off"></label>
+      <div class="row"><button class="ghost" name="mode" value="save">保存</button><span class="spacer"></span><button class="primary" name="mode" value="send">📤 ${W().reportTo ? `${esc(W().reportTo)}に` : ''}送る</button></div>
+    </form>
+    <button class="linkbtn" data-act="copyday">📋 Notion用に今日の記録をまとめてコピー</button>
+  </section>`;
+}
+async function shareText(text) {
+  if (navigator.share) {
+    try { await navigator.share({ text }); return 'shared'; } catch (e) { if (e && e.name === 'AbortError') return 'cancel'; }
+  }
+  try { await navigator.clipboard.writeText(text); } catch (e) {
+    const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); } catch (err) { /* noop */ }
+    ta.remove();
+  }
+  return 'copied';
+}
+
+/* ----- IOIF：少し学んだら、すぐアウトプット ----- */
+const OUTPUT_TYPES = ['セミナー・勉強会', '学んだことを人に説明', 'ロープレ', '資料作成・SNS発信'];
+function ioifCard() {
+  const ym = todayKey().slice(0, 7);
+  const inM = W().inputs.filter((x) => x.date.startsWith(ym)).length;
+  const outM = W().outputs.filter((x) => x.date.startsWith(ym)).length;
+  const sem = W().seminar;
+  const semLeft = sem.date && sem.date >= todayKey() ? daysLeft(sem.date) : null;
+  return `<section class="card">
+    <h2>🎤 インプット → すぐアウトプット <span class="sub">今月 学び${inM}・アウトプット${outM}</span></h2>
+    <div class="small muted" style="margin-bottom:8px">受けただけの研修は、受けていないのと同じ。2割わかったら、まず話す・やってみる</div>
+    <div class="io-ratio"><div class="io-in" style="flex:${Math.max(1, inM)}">学び ${inM}</div><div class="io-out" style="flex:${Math.max(1, outM)}">アウトプット ${outM}</div></div>
+    <form id="inputForm" class="todo-add"><input name="text" placeholder="今日学んだこと（研修・本・動画）" autocomplete="off"><button class="primary">登録</button></form>
+    <div class="small muted" style="margin-bottom:12px">登録すると「人に話す・使ってみる」が24時間以内のやることになります</div>
+    <div class="g-sub">🎤 次のセミナー・勉強会</div>
+    ${semLeft !== null ? `<div class="sem"><b>${esc(sem.title || 'セミナー')}</b><span>${md(sem.date)} ・ あと <b>${semLeft}</b>日</span></div>`
+      : '<div class="small muted" style="margin-bottom:6px">参加者は1人でもいい。内容が決まっていなくても、まず日程を入れる</div>'}
+    <form id="seminarForm" class="todo-add"><input name="title" placeholder="テーマ（仮でOK）" value="${esc(semLeft !== null ? sem.title : '')}" autocomplete="off"><input type="date" name="date" class="date-in" value="${semLeft !== null ? sem.date : ''}"><button class="ghost">${semLeft !== null ? '変更' : '日程を入れる'}</button></form>
+    <div class="g-sub" style="margin-top:12px">アウトプットを記録</div>
+    <form id="outputForm">
+      <div class="row"><select name="type">${OUTPUT_TYPES.map((t) => `<option>${t}</option>`).join('')}</select><input name="people" type="number" min="0" placeholder="人数" class="num-in" inputmode="numeric"></div>
+      <div class="todo-add" style="margin-top:6px"><input name="title" placeholder="内容（例：先週の研修内容を同僚に説明）" autocomplete="off"><button class="primary">記録</button></div>
+    </form>
+    ${W().outputs.length ? `<details class="small"><summary>アウトプットの記録（${W().outputs.length}）</summary>
+      ${W().outputs.slice().reverse().slice(0, 20).map((o) => `<div class="mrow"><span>${md(o.date)} ${esc(o.type)}：${esc(o.title)}</span><span class="small muted">${o.people ? `${o.people}人` : ''}</span></div>`).join('')}
+    </details>` : ''}
+  </section>`;
+}
+
+/* ----- 積み上げ3本柱（人脈・知識・技術） ----- */
+function pillarsCard() {
+  const ym = todayKey().slice(0, 7);
+  const people = new Set(W().meetings.map((m) => m.who).filter(Boolean));
+  const peopleM = new Set(W().meetings.filter((m) => m.date.startsWith(ym)).map((m) => m.who).filter(Boolean));
+  const know = W().inputs.length, knowM = W().inputs.filter((x) => x.date.startsWith(ym)).length;
+  const skill = W().outputs.length + W().meetings.length;
+  const skillM = W().outputs.filter((x) => x.date.startsWith(ym)).length + W().meetings.filter((m) => m.date.startsWith(ym)).length;
+  const last = W().meetings.slice().sort((a, b) => (a.date < b.date ? 1 : -1)).slice(0, 10);
+  const avg = last.length ? Math.round(last.reduce((a, m) => a + m.score, 0) / last.length) : null;
+  if (!people.size && !know && !skill) return '';
+  return `<section class="card">
+    <h2>🏗️ 積み上げ3本柱 <span class="sub">FPは「人脈・知識・技術」を積み上げる仕事</span></h2>
+    <div class="pillars">
+      <div class="pl p1"><small>人脈</small><b>${people.size}</b><span>会った人 ・ 今月+${peopleM.size}</span></div>
+      <div class="pl p2"><small>知識</small><b>${know}</b><span>学び ・ 今月+${knowM}</span></div>
+      <div class="pl p3"><small>技術</small><b>${skill}</b><span>実践回数 ・ 今月+${skillM}</span></div>
+    </div>
+    ${avg !== null ? `<div class="small muted" style="margin-top:8px">面談チェックの平均（直近${last.length}件）：<b>${avg}%</b> ・ 積み上がっていれば、半年前より今の方が楽になっているはず</div>` : ''}
+  </section>`;
+}
+
 function renderWork() {
-  return `${goalCard()}${meetingCard()}${followCard()}${abcCard()}${reviewCard()}${metricsCard()}${principlesCard()}${notionCard()}`;
+  return `${reportCard()}${goalCard()}${hypoCard()}${meetingCard()}${followCard()}${ioifCard()}${abcCard()}${reviewCard()}${metricsCard()}${principlesCard()}`;
 }
 function openForm(html) { $('#formBody').innerHTML = html; $('#formDialog').showModal(); }
 
@@ -523,6 +731,9 @@ const ROUTINE_TEMPLATES = [
   { emoji: '🌙', name: '夜のルーティーン', time: '22:30', steps: ['明日の服とカバンを準備', 'スマホを充電器へ（寝室の外）', 'ひとこと日誌を書く', '23時に布団に入る'] },
   { emoji: '💼', name: '仕事はじめ', time: '09:00', steps: ['デスクを片づける', '今日の最重要タスクを決める', '通知を切って25分集中'] },
   { emoji: '🏋️', name: 'トレーニング前', time: '', steps: ['ウェアに着替える', '水を用意する', 'ウォームアップ5分'] },
+  { emoji: '📖', name: '勉強の時間', time: '07:00', steps: ['商品・制度の資料を1つ読む', 'Q&Aを3つ確認する', '学んだことを声に出して説明してみる'] },
+  { emoji: '📱', name: '連絡まとめの時間', time: '12:30', steps: ['LINE・メールをまとめて返信', 'フォローの連絡をする', '次のアポの確認連絡'] },
+  { emoji: '🧠', name: '振り返りの時間', time: '21:00', steps: ['今日の面談を記録する', '日報を書いて提出する', '明日の仮説を1つ決める'] },
 ];
 const activeRoutines = () => S.routines.filter((r) => !r.archived);
 const rlogOf = (r, k) => (S.rlogs[k] && S.rlogs[k][r.id]) || null;
@@ -944,6 +1155,11 @@ function banners() {
   }
   const od = overdueCount();
   if (od) out += `<div class="banner warn">⚠️ <b>24時間ルール：</b>期限切れが${od}件。今すぐ1つ動こう。</div>`;
+  const hm = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  const rep = W().reports[t];
+  if (S.settings.journalAt && hm >= S.settings.journalAt && !(rep && rep.sentAt)) {
+    out += `<div class="banner warn">📝 <b>日報の時間。</b>${W().reportTo ? `${esc(W().reportTo)}に` : ''}今日の振り返りを提出しよう。 <button class="linkbtn" data-act="gotowork" style="padding:0">日報を書く →</button></div>`;
+  }
   if ((d.getDay() === 0 || d.getDay() === 1) && !W().reviews[reviewKey()]) {
     out += '<div class="banner">🗓️ <b>週1ふりかえりの日。</b> <button class="linkbtn" data-act="gotowork" style="padding:0">仕事タブで今週をふりかえる →</button></div>';
   }
@@ -1272,6 +1488,7 @@ function renderLog() {
     <div class="tile t2"><span class="v">${Math.max(S.bestStreak, dayStreak())}<em>日</em></span><small>自己ベスト連続</small></div>
     <div class="tile t3"><span class="v">${active}<em>/${today.getDate()}</em></span><small>今月 動いた日</small></div>
   </section>
+  ${pillarsCard()}
   ${cumulativeChart()}
   ${weeklyChart()}
   ${calendarCard()}
@@ -1341,6 +1558,13 @@ const PSY = [
   ['🏆 自己ベストまであと◯日（目標勾配効果）', 'ゴールが近づくほど人は加速します。自己ベストまでの距離を常に表示しています。'],
   ['⭕ 今日の進捗バー（ツァイガルニク効果）', '人は未完了のものを完了させたくなります。「残り1つでパーフェクト」で最後のひと押しを。'],
   ['🛡️ シールド（What-the-hell 効果の防止）', '1回途切れると「もういいや」とやめてしまいがち。7日連続ごとのシールドが休んだ日を守ります。'],
+  ['🧪 仮説と検証', '仮説を持たない実行は、ただの浪費。「こうしたら → こうなるはず」を決め、数字で結果を確かめると、うまくいってもいかなくても次の改善につながります。'],
+  ['🎤 IOIF（少しインプット → すぐアウトプット）', '完璧にインプットしてから動くのではなく、2割わかったらアウトプットし、その結果からまた学ぶ。失敗を前提にした試行錯誤が、いちばん早く成果につながります。'],
+  ['📝 日報と提出（コミットメント）', '数字と振り返りを毎日書き、決めた相手に提出する。誰かに約束すると、自分ひとりより続きやすくなります。'],
+  ['🗺️ フィールド別の数字管理', 'どこで出会った人が成約しやすいかを数字で見ると、限られた時間をどこに使うべきかがわかります。'],
+  ['🔑 KGI・KSF・KPI', 'ゴール（KGI）→ 達成に欠かせないこと（KSF）→ 自分で100%コントロールできる毎日の行動（KPI）の順に決めます。KPIを守れば、ゴールは自然と近づきます。'],
+  ['⏱️ 自分で完結する予定もスケジュールに', '勉強・振り返り・連絡など、自分ひとりで完結することほど「空いたらやる」になりがち。時間を決めてルーティーンに入れます。'],
+  ['🏗️ 人脈・知識・技術の積み上げ', 'FPは積み上げる仕事。積み上がっていれば、半年前より今の方が楽になっているはず。3本柱の数字でそれを確かめます。'],
   ['📊 毎日の最低ライン（外発的な刺激に頼らない）', '人に会った直後だけやる気が上がり、数日で元に戻るのは自然なこと。調子が悪い日でもできる量を固定し、毎日記録することで「気分」ではなく「仕組み」で動けるようになります。'],
   ['⚡ 24時間ルール（実行意図・ツァイガルニク効果）', '気づきは時間がたつほど行動に変わらなくなります。期限と残り時間を見えるようにすると「やりかけ」が気になって動きやすくなります。「悔しい」は感情が強いうちに一つの行動へ。'],
   ['🤝 面談のあとに「守れたか」を記録（自己モニタリング）', '自分の行動を記録するだけで、行動は基準に近づいていきます。自分の印象ではなく、相手の結果で自分を評価する習慣をつくります。'],
@@ -1494,6 +1718,18 @@ document.addEventListener('click', (e) => {
       if (confirm('この項目を削除しますか？（これまでの記録も数えられなくなります）')) { W().metrics = W().metrics.filter((m) => m.id !== id); save(); render(); }
       break;
     case 'copyday': copyDay(); break;
+    case 'hypohit': case 'hypomiss': {
+      const h = W().hypotheses.find((x) => x.id === id);
+      if (h) {
+        const inp = $(`#hr_${id}`);
+        h.result = inp ? inp.value.trim() : '';
+        h.status = act === 'hypohit' ? 'hit' : 'miss';
+        h.doneAt = todayKey();
+        toast(act === 'hypohit' ? '⭕ 仮説が当たった。続けて精度を上げよう' : '❌ 外れも収穫。次の仮説につなげよう');
+        save(); render();
+      }
+      break;
+    }
     case 'rrestore': { const r = S.routines.find((x) => x.id === id); if (r) { r.archived = false; save(); render(); toast(`${esc(r.emoji)} 再開した`); } break; }
     case 'ropen': if (openRoutines.has(id)) openRoutines.delete(id); else openRoutines.add(id); render(); break;
     case 'todo': toggleTodo(id); break;
@@ -1554,6 +1790,54 @@ document.addEventListener('submit', (e) => {
       m.min = Math.max(0, Number(e.target.elements.namedItem(`v_${m.id}`).value) || 0);
     });
     save(); render(); toast('📊 最低ラインを保存しました。毎日このラインだけは守る');
+  } else if (id === 'hypoForm') {
+    e.preventDefault();
+    const f = e.target.elements, text = f.namedItem('text').value.trim();
+    if (!text) { toast('「こうしたら → こうなるはず」を書こう'); return; }
+    W().hypotheses.push({ id: uid(), text, metric: f.namedItem('metric').value.trim(), until: f.namedItem('until').value, status: 'testing', result: '', createdAt: todayKey() });
+    toast('🧪 仮説を立てた。数字で確かめよう');
+    save(); render();
+  } else if (id === 'reportForm') {
+    e.preventDefault();
+    const f = e.target.elements, k = todayKey();
+    const a = REPORT_QS.map((_, i) => f.namedItem(`a${i}`).value.trim());
+    W().reportTo = f.namedItem('to').value.trim();
+    const prev = W().reports[k] || {};
+    W().reports[k] = { ...prev, a, savedAt: Date.now() };
+    const mode = e.submitter ? e.submitter.value : 'save';
+    if (mode === 'send') {
+      shareText(reportText(k)).then((r) => {
+        if (r === 'cancel') { save(); render(); return; }
+        W().reports[k].sentAt = Date.now();
+        toast(r === 'shared' ? '📤 日報を送りました' : '📋 日報をコピーしました。LINEなどに貼り付けて送ってください');
+        if (!prev.sentAt) confetti(60);
+        save(); render();
+      });
+    } else { toast('📝 日報を保存しました'); save(); render(); }
+  } else if (id === 'inputForm') {
+    e.preventDefault();
+    const text = e.target.elements.namedItem('text').value.trim();
+    if (!text) return;
+    W().inputs.push({ id: uid(), date: todayKey(), text });
+    S.todos.push({ id: uid(), text: `「${text}」を人に話す・使ってみる`, frog: false, done: false, doneAt: null, createdAt: todayKey(), kind: 'output', due: Date.now() + 86400000, date: null });
+    toast('🎤 24時間以内にアウトプットしよう');
+    save(); render();
+  } else if (id === 'seminarForm') {
+    e.preventDefault();
+    const f = e.target.elements, date = f.namedItem('date').value;
+    if (!date) { toast('まず日程だけ入れよう'); return; }
+    W().seminar = { date, title: f.namedItem('title').value.trim() };
+    S.todos.push({ id: uid(), text: `セミナー「${W().seminar.title || 'テーマ未定'}」を開催`, frog: false, done: false, doneAt: null, createdAt: todayKey(), kind: 'output', due: null, date });
+    toast('🎤 日程を入れた。あとは当日までに2割でいいので準備しよう');
+    save(); render();
+  } else if (id === 'outputForm') {
+    e.preventDefault();
+    const f = e.target.elements, title = f.namedItem('title').value.trim();
+    if (!title) { toast('内容をひとこと書こう'); return; }
+    W().outputs.push({ id: uid(), date: todayKey(), type: f.namedItem('type').value, title, people: Number(f.namedItem('people').value) || 0 });
+    toast('🎤 アウトプットを記録。話せた分だけ自分のものになる');
+    confetti(50);
+    save(); render();
   } else if (id === 'principlesForm') {
     e.preventDefault();
     W().principles = e.target.elements.namedItem('p').value;
@@ -1777,7 +2061,7 @@ function notifySection() {
         : `<button class="primary" data-act="notifyon" ${disabled ? 'disabled' : ''}>オンにする</button>`}
     </div>
     <div class="setting">
-      <div><b>📝 ふりかえりの時刻</b><div class="small muted">今日の結果を通知</div></div>
+      <div><b>📝 日報・ふりかえりの時刻</b><div class="small muted">この時刻をすぎて未提出なら、通知と画面でお知らせ</div></div>
       <input type="time" id="journalAt" value="${esc(S.settings.journalAt || '')}">
     </div>
     <div class="small muted">⏰ 習慣ごとの時刻は、習慣の名前をタップ →「くわしく設定」で決められます。</div>
