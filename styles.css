@@ -458,3 +458,14 @@ dialog label select { margin-top: 4px; font-weight: 400; }
 .ksf::before { content: "🔑 "; }
 .smart { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
 .smart b { display: inline-block; width: 20px; color: var(--accent); }
+
+/* ---------- スマホ対策 ----------
+ * iPhone(Safari)は文字サイズ16px未満の入力欄をタップすると自動で拡大し、
+ * 元に戻らず画面がはみ出したように見える。入力欄はすべて16pxにする。 */
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+input, textarea, select { font-size: 16px !important; max-width: 100%; }
+.emoji-field input { font-size: 20px !important; }
+.todo-add input, .h-judge input, .row input, .row select, .mset input { min-width: 0; }
+textarea { overflow-wrap: anywhere; }
+.principle, .mq, .ksf, .h-text, .goalstrip, .r-title b, .step .st, .habit .name, .entry p { overflow-wrap: anywhere; word-break: normal; }
+main, .card, dialog { min-width: 0; }
