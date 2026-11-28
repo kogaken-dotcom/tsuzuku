@@ -297,16 +297,16 @@ function openGoal() {
   const g = W().goal;
   openForm(`<form method="dialog" id="goalForm">
     <h2>🎯 目標と期限</h2>
-    <div class="row"><label class="grow">契約目標（件）<input type="number" name="contractTarget" min="0" value="${g.contractTarget || ''}" inputmode="numeric"></label>
-      <label class="grow">期限<input type="date" name="contractDeadline" value="${g.contractDeadline}"></label></div>
+    <label>契約目標（件）<input type="number" name="contractTarget" min="0" value="${g.contractTarget || ''}" inputmode="numeric"></label>
+    <label>契約目標の期限<input type="date" name="contractDeadline" value="${g.contractDeadline}"></label>
     <label>契約を数え始める日<input type="date" name="contractStart" value="${g.contractStart}"><small>この日以降に「契約後フォロー」で記録した契約を数えます</small></label>
     <label>今月の契約目標（件）<input type="number" name="monthlyTarget" min="0" value="${g.monthlyTarget || ''}" inputmode="numeric"><small>年間（期限）の目標から逆算した、今月の目標</small></label>
     <label>🔑 成功の鍵（KSF）：目標達成に欠かせないこと（3〜5個・1行に1つ）
       <textarea name="ksf" rows="3" placeholder="例：紹介を途切れさせない&#10;ライフプランで潜在的な不安を深く聞き出す&#10;契約後のフォローで信頼関係を築く">${esc((g.ksf || []).join('\n'))}</textarea>
       <small>KSFを実行するための「毎日の行動（KPI）」は、仕事タブの「活動量の最低ライン」で決めます</small></label>
     <label>達成条件（1行に1つ）<textarea name="conditions" rows="3" placeholder="例：資格試験に合格">${esc(g.conditions.map((c) => c.text).join('\n'))}</textarea></label>
-    <div class="row"><label class="grow">期限の名前<input name="deadlineLabel" value="${esc(g.deadlineLabel)}" placeholder="例：判断の期限"></label>
-      <label class="grow">期限日<input type="date" name="deadlineDate" value="${g.deadlineDate}"></label></div>
+    <label>期限の名前<input name="deadlineLabel" value="${esc(g.deadlineLabel)}" placeholder="例：判断の期限"></label>
+    <label>期限日<input type="date" name="deadlineDate" value="${g.deadlineDate}"></label>
     <label>毎月の収入の基準（円）<input type="number" name="incomeTarget" min="0" value="${g.incomeTarget || ''}" inputmode="numeric"></label>
     <div class="guard">
       <b>🔒 目標の定義を変えるとき</b>
@@ -388,8 +388,8 @@ function meetingCard() {
 function openMeeting() {
   openForm(`<form method="dialog" id="meetingForm">
     <h2>🤝 面談を記録</h2>
-    <div class="row"><label class="grow">相手（イニシャル推奨）<input name="who" placeholder="例：Aさん" autocomplete="off"></label>
-      <label>日付<input type="date" name="date" value="${todayKey()}"></label></div>
+    <label>相手（イニシャル推奨）<input name="who" placeholder="例：Aさん" autocomplete="off"></label>
+    <label>日付<input type="date" name="date" value="${todayKey()}"></label>
     <div class="row"><label class="grow">出会ったフィールド<select name="channel">${W().channels.map((c) => `<option>${esc(c)}</option>`).join('')}</select></label>
       <label class="grow">結果<select name="result">${MEET_RESULTS.map(([v, l]) => `<option value="${v}">${l}</option>`).join('')}</select></label></div>
     <label class="inline"><input type="checkbox" name="first"> 初回面談</label>
@@ -610,7 +610,7 @@ function hypoCard() {
     </div>`).join('')}
     <form id="hypoForm" class="hypo-form">
       <input name="text" placeholder="仮説：例）経営者の会で「保険を卒業させるFP」と名乗ると、アポ率が上がる" autocomplete="off">
-      <div class="row"><input name="metric" placeholder="測るもの：例）名刺交換→アポ率" autocomplete="off"><input type="date" name="until" class="date-in"></div>
+      <input name="metric" placeholder="測るもの：例）名刺交換→アポ率" autocomplete="off"><label class="rq" style="margin:0">検証の期限<input type="date" name="until"></label>
       <button class="primary" style="width:100%">仮説を立てる</button>
     </form>
     ${done.length ? `<details class="small" style="margin-top:10px"><summary>検証の記録（${done.length}）</summary>
